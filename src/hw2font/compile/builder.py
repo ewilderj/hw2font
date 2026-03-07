@@ -176,19 +176,23 @@ def _kern_lines(kern_cfg: dict) -> list[str]:
     kern_cfg supports:
       - Class defaults: overhang_lc, round_lc, straight_lc, open_lc
       - Per-pair overrides: pairs.Ta = -150 (first char + second char)
-    Negative values tighten spacing.
+      - Right-side blanket: right.x = -40 (x followed by anything)
+      - Left-side blanket:  left.o = -20 (anything followed by o)
+    Negative values tighten spacing.  Priority: pairs > right/left > classes.
     """
     merged = {**DEFAULT_KERN, **kern_cfg}
     pair_overrides: dict = merged.pop("pairs", {})
+    right_overrides: dict = merged.pop("right", {})
+    left_overrides: dict = merged.pop("left", {})
 
-    # Build the per-pair kern map: (g1_name, g2_name) → value
     def _name(c: str) -> str:
         return f"uni{ord(c):04X}"
 
+    all_letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
     lc = list("abcdefghijklmnopqrstuvwxyz")
     kern_map: dict[tuple[str, str], int] = {}
 
-    # Apply class defaults: each UC shape class → all lowercase
+    # 1. Class defaults: each UC shape class → all lowercase
     for class_key, uc_chars in _UC_SHAPE_CLASSES.items():
         value = merged.get(f"{class_key}_lc", 0)
         if value != 0:
@@ -196,7 +200,19 @@ def _kern_lines(kern_cfg: dict) -> list[str]:
                 for l in lc:
                     kern_map[(_name(u), _name(l))] = value
 
-    # Apply per-pair overrides (higher priority, overwrites class values)
+    # 2. Right-side blanket: glyph followed by any letter
+    for char, value in right_overrides.items():
+        if len(char) == 1:
+            for other in all_letters:
+                kern_map[(_name(char), _name(other))] = value
+
+    # 3. Left-side blanket: any letter followed by glyph
+    for char, value in left_overrides.items():
+        if len(char) == 1:
+            for other in all_letters:
+                kern_map[(_name(other), _name(char))] = value
+
+    # 4. Per-pair overrides (highest priority)
     for pair_str, value in pair_overrides.items():
         if len(pair_str) == 2:
             kern_map[(_name(pair_str[0]), _name(pair_str[1]))] = value

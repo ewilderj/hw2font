@@ -25,16 +25,19 @@ name = "Edd Handwriting"
 #   round_lc    = C, G, O, Q, D  (default: -60)
 #   straight_lc = H, I, M, N, …  (default: -40)
 #   open_lc     = A, J, P, S, …  (default: -50)
-# Per-pair overrides (two-char key = first + second glyph):
+# Blanket per-glyph kerning:
+#   right.x = -40                # x followed by anything
+#   left.o = -20                 # anything followed by o
+# Per-pair overrides (highest priority):
 #   pairs.Ta = -150              # override just T→a
-#   pairs.Yo = -130
 [kern]
 overhang_lc = -120
 round_lc = -60
 straight_lc = -40
 open_lc = -50
+# right.x = -40
+# left.o = -20
 # pairs.Ta = -150
-# pairs.Vo = -130
 
 [[sets]]
 scans = ["extract1.png", "extract2.png"]
