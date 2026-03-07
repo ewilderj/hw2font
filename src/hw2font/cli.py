@@ -126,10 +126,9 @@ def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) 
 @click.option(
     "-o",
     "--output",
-    default="output/Handwriting_MVP.otf",
-    show_default=True,
+    default=None,
     type=click.Path(dir_okay=False, writable=True),
-    help="Path for the compiled .otf font file.",
+    help="Path for the compiled .otf font file (default: derived from config name).",
 )
 @click.option(
     "--dpi",
@@ -138,7 +137,7 @@ def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) 
     type=int,
     help="DPI of the scanned images.",
 )
-def build(config: str, output: str, dpi: int) -> None:
+def build(config: str, output: str | None, dpi: int) -> None:
     """Extract + compile all scan sets from a config file into one font.
 
     The config file lists multiple scan sets, each with their own scans
@@ -147,6 +146,8 @@ def build(config: str, output: str, dpi: int) -> None:
 
     \b
     Example config (TOML):
+        name = "My Handwriting"
+
         [[sets]]
         scans = ["extract1.png", "extract2.png"]
 
@@ -164,7 +165,14 @@ def build(config: str, output: str, dpi: int) -> None:
     if not sets:
         raise click.UsageError("Config file must contain at least one [[sets]] entry")
 
+    font_name: str | None = cfg.get("name")
+    if output is None:
+        filename = (font_name or "Handwriting").replace(" ", "_") + ".otf"
+        output = str(Path("output") / filename)
+
     click.echo(f"Building font from {len(sets)} scan set(s)...")
+    if font_name:
+        click.echo(f"  Font name: {font_name}")
 
     extracted_dirs: list[Path] = []
     overrides_list: list[dict] = []
@@ -187,14 +195,14 @@ def build(config: str, output: str, dpi: int) -> None:
     for i, (edir, ovr) in enumerate(zip(extracted_dirs, overrides_list)):
         tmp_otf = output_base / f"set{i}" / "preview.otf"
         click.echo(f"  Set {i}: compiling preview font...")
-        compile_font(edir, tmp_otf, dpi, overrides=ovr)
+        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name)
         proof_path = Path(f"output/proof_set{i}.png")
         generate_proof(tmp_otf, proof_path)
         tmp_otf.unlink(missing_ok=True)
         click.echo(f"    ✓ Proof → {proof_path}")
 
     click.echo("  Compiling font with contextual alternates...")
-    path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi)
+    path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi, font_name=font_name)
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 
 

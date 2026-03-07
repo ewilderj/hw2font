@@ -157,6 +157,7 @@ def _build_fontforge_script(
     output_otf: str,
     dpi: int,
     overrides: dict | None = None,
+    font_name: str | None = None,
 ) -> str:
     """Generate a FontForge Python script as a string.
 
@@ -246,9 +247,9 @@ def _build_fontforge_script(
         import json
 
         font = fontforge.font()
-        font.familyname = "{FONT_FAMILY}"
-        font.fontname = "{FONT_NAME}"
-        font.fullname = "{FONT_FAMILY} MVP"
+        font.familyname = "{font_name or FONT_FAMILY}"
+        font.fontname = "{(font_name or FONT_FAMILY).replace(' ', '_')}"
+        font.fullname = "{font_name or FONT_FAMILY}"
         font.em = {DEFAULT_UPM}
         font.ascent = {DEFAULT_ASCENT}
         font.descent = {DEFAULT_DESCENT}
@@ -344,6 +345,7 @@ def _build_multiset_fontforge_script(
     sets: list[dict],
     output_otf: str,
     dpi: int,
+    font_name: str | None = None,
 ) -> str:
     """Generate a FontForge script that imports multiple glyph sets and
     creates contextual alternates (calt) to cycle between them.
@@ -398,9 +400,9 @@ def _build_multiset_fontforge_script(
         import psMat
 
         font = fontforge.font()
-        font.familyname = "{FONT_FAMILY}"
-        font.fontname = "{FONT_NAME}"
-        font.fullname = "{FONT_FAMILY} MVP"
+        font.familyname = "{font_name or FONT_FAMILY}"
+        font.fontname = "{(font_name or FONT_FAMILY).replace(' ', '_')}"
+        font.fullname = "{font_name or FONT_FAMILY}"
         font.em = {DEFAULT_UPM}
         font.ascent = {DEFAULT_ASCENT}
         font.descent = {DEFAULT_DESCENT}
@@ -574,6 +576,7 @@ def compile_font_multiset(
     overrides_list: list[dict],
     output_otf: str | Path = "output/Handwriting_MVP.otf",
     dpi: int = 600,
+    font_name: str | None = None,
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
@@ -592,7 +595,7 @@ def compile_font_multiset(
             "overrides": ovr,
         })
 
-    script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi)
+    script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", prefix="ff_build_", delete=False,
@@ -622,6 +625,7 @@ def compile_font(
     output_otf: str | Path = "output/Handwriting_MVP.otf",
     dpi: int = 600,
     overrides: dict | None = None,
+    font_name: str | None = None,
 ) -> Path:
     """Full Module C pipeline: vectorize → assemble → compile .otf."""
     extracted_dir = Path(extracted_dir)
@@ -639,7 +643,7 @@ def compile_font(
     metadata_path = str((extracted_dir / "metadata.json").resolve())
     script = _build_fontforge_script(
         svg_str_map, metadata, metadata_path,
-        str(output_otf.resolve()), dpi, overrides,
+        str(output_otf.resolve()), dpi, overrides, font_name=font_name,
     )
 
     # Step 3: Run FontForge

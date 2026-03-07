@@ -2,6 +2,8 @@
 # Each [[sets]] entry is a scan set (2 pages per set).
 # The font will cycle between sets using contextual alternates (calt).
 
+name = "Edd Handwriting"
+
 [[sets]]
 scans = ["extract1.png", "extract2.png"]
 
