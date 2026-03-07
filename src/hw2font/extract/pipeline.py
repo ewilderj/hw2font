@@ -279,7 +279,7 @@ def _process_cell(
             # relative to it — these are border/noise fragments.
             cy = centroids[i][1]
             if (cy < largest_top - 20 or cy > largest_bot + 20) and \
-               stats[i, cv2.CC_STAT_AREA] < largest_area * 0.05:
+               stats[i, cv2.CC_STAT_AREA] < largest_area * 0.15:
                 binary[labels == i] = 0
 
     ink_area = int(np.count_nonzero(binary))
