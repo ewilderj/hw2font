@@ -156,7 +156,8 @@ def build(config: str, output: str, dpi: int) -> None:
         overrides.i = {scale = 0.9, nudge = 10}
     """
     from hw2font.extract.pipeline import extract_glyphs
-    from hw2font.compile.builder import compile_font_multiset
+    from hw2font.compile.builder import compile_font, compile_font_multiset
+    from hw2font.proof.sheet import generate_proof
 
     cfg = _load_config(config)
     sets = cfg.get("sets", [])
@@ -181,6 +182,16 @@ def build(config: str, output: str, dpi: int) -> None:
 
         extracted_dirs.append(out_dir)
         overrides_list.append(s.get("overrides", {}))
+
+    # Generate per-set proof sheets so each set can be reviewed independently
+    for i, (edir, ovr) in enumerate(zip(extracted_dirs, overrides_list)):
+        tmp_otf = output_base / f"set{i}" / "preview.otf"
+        click.echo(f"  Set {i}: compiling preview font...")
+        compile_font(edir, tmp_otf, dpi, overrides=ovr)
+        proof_path = Path(f"output/proof_set{i}.png")
+        generate_proof(tmp_otf, proof_path)
+        tmp_otf.unlink(missing_ok=True)
+        click.echo(f"    ✓ Proof → {proof_path}")
 
     click.echo("  Compiling font with contextual alternates...")
     path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi)
