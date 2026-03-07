@@ -8,18 +8,13 @@ from pathlib import Path
 import click
 
 
+def _load_config(config_path: str) -> dict:
+    """Load a TOML config file and return the parsed dict."""
+    return tomllib.loads(Path(config_path).read_text())
+
+
 def _load_overrides(config_path: str | None) -> dict:
-    """Load per-glyph overrides from a TOML config file.
-
-    Expected format::
-
-        [overrides.a]
-        scale = 0.8
-
-        [overrides.i]
-        scale = 0.9
-        nudge = 10    # pixels up (positive = up)
-    """
+    """Load per-glyph overrides from a single-set config file."""
     if not config_path:
         return {}
     path = Path(config_path)
@@ -124,6 +119,72 @@ def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) 
         click.echo(f"  Loaded {len(overrides)} glyph override(s) from {config_path}")
     path = compile_font(extracted_dir, output, dpi, overrides)
     click.echo(f"✓ Font compiled → {path}")
+
+
+@main.command()
+@click.argument("config", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "-o",
+    "--output",
+    default="output/Handwriting_MVP.otf",
+    show_default=True,
+    type=click.Path(dir_okay=False, writable=True),
+    help="Path for the compiled .otf font file.",
+)
+@click.option(
+    "--dpi",
+    default=600,
+    show_default=True,
+    type=int,
+    help="DPI of the scanned images.",
+)
+def build(config: str, output: str, dpi: int) -> None:
+    """Extract + compile all scan sets from a config file into one font.
+
+    The config file lists multiple scan sets, each with their own scans
+    and optional per-glyph overrides. The resulting font uses contextual
+    alternates (calt) to cycle between glyph variants for natural variety.
+
+    \b
+    Example config (TOML):
+        [[sets]]
+        scans = ["extract1.png", "extract2.png"]
+
+        [[sets]]
+        scans = ["alt1.png", "alt2.png"]
+        overrides.a.scale = 0.8
+        overrides.i = {scale = 0.9, nudge = 10}
+    """
+    from hw2font.extract.pipeline import extract_glyphs
+    from hw2font.compile.builder import compile_font_multiset
+
+    cfg = _load_config(config)
+    sets = cfg.get("sets", [])
+    if not sets:
+        raise click.UsageError("Config file must contain at least one [[sets]] entry")
+
+    click.echo(f"Building font from {len(sets)} scan set(s)...")
+
+    extracted_dirs: list[Path] = []
+    overrides_list: list[dict] = []
+    output_base = Path("output/extracted")
+
+    for i, s in enumerate(sets):
+        scans = s.get("scans", [])
+        if not scans:
+            raise click.UsageError(f"Set {i} has no scans")
+
+        out_dir = output_base / f"set{i}"
+        click.echo(f"  Set {i}: extracting {len(scans)} scan(s)...")
+        extract_glyphs(scans, str(out_dir), dpi)
+        click.echo(f"    ✓ Extracted → {out_dir}/")
+
+        extracted_dirs.append(out_dir)
+        overrides_list.append(s.get("overrides", {}))
+
+    click.echo("  Compiling font with contextual alternates...")
+    path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi)
+    click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 
 
 @main.command()

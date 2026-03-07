@@ -338,7 +338,284 @@ def _build_fontforge_script(
     return "\n".join(lines)
 
 
-# ── Public API ────────────────────────────────────────────────────────
+# ── Multi-set compilation with contextual alternates ──────────────────
+
+def _build_multiset_fontforge_script(
+    sets: list[dict],
+    output_otf: str,
+    dpi: int,
+) -> str:
+    """Generate a FontForge script that imports multiple glyph sets and
+    creates contextual alternates (calt) to cycle between them.
+
+    Each entry in *sets* is a dict with:
+      - svg_map: {glyph: svg_path_str}
+      - metadata: parsed metadata.json
+      - overrides: per-glyph {scale, nudge}
+      - set_idx: 0-based set index
+    """
+    n_sets = len(sets)
+    lines: list[str] = []
+
+    # ── Compute universal scale from set 0 (primary) ──
+    primary = sets[0]
+    p_meta = primary["metadata"]
+    uc_px = sorted(
+        p_meta[g]["bbox_h"]
+        for g in p_meta
+        if len(g) == 1 and g.isupper()
+    )
+    median_uc_px = uc_px[len(uc_px) // 2] if uc_px else 200
+    _cap_target = DEFAULT_ASCENT * 0.85
+    _px_to_fu = _cap_target / median_uc_px
+
+    # ── Compute baseline nudge medians from set 0 ──
+    _NON_DESC_LC = _XH_ONLY | _LC_ASCENDER
+    _NUDGE_GROUPS = {"lc_nondesc", "lc_desc"}
+    import statistics as _stats
+
+    def _bl_group(g: str) -> str:
+        if len(g) == 1:
+            if g in _NON_DESC_LC:
+                return "lc_nondesc"
+            if g in _LC_DESCENDER:
+                return "lc_desc"
+        elif len(g) > 1:
+            if any(c in _LC_DESCENDER for c in g):
+                return "lc_desc"
+            return "lc_nondesc"
+        return "other"
+
+    # Compute group medians from set 0
+    groups: dict[str, list[float]] = {}
+    for g, info in p_meta.items():
+        grp = _bl_group(g)
+        groups.setdefault(grp, []).append(info.get("y_offset", 0))
+    group_medians = {grp: _stats.median(offs) for grp, offs in groups.items()}
+
+    lines.append(textwrap.dedent(f"""\
+        import fontforge
+        import psMat
+
+        font = fontforge.font()
+        font.familyname = "{FONT_FAMILY}"
+        font.fontname = "{FONT_NAME}"
+        font.fullname = "{FONT_FAMILY} MVP"
+        font.em = {DEFAULT_UPM}
+        font.ascent = {DEFAULT_ASCENT}
+        font.descent = {DEFAULT_DESCENT}
+    """))
+
+    # Track which glyphs have alternates for calt generation
+    alt_glyphs: dict[str, list[str]] = {}  # glyph -> [alt_name, ...]
+
+    for s in sets:
+        set_idx = s["set_idx"]
+        svg_map = s["svg_map"]
+        meta = s["metadata"]
+        overrides = s.get("overrides", {})
+        suffix = "" if set_idx == 0 else f".alt{set_idx}"
+
+        # Use set 0's px_to_fu for all sets (consistent scale reference)
+        # but compute per-set nudge medians
+        set_groups: dict[str, list[float]] = {}
+        for g, info in meta.items():
+            grp = _bl_group(g)
+            set_groups.setdefault(grp, []).append(info.get("y_offset", 0))
+        set_medians = {grp: _stats.median(offs) for grp, offs in set_groups.items()}
+
+        for glyph, svg_path in svg_map.items():
+            info = meta.get(glyph, {})
+            bbox_h = info.get("bbox_h", 1)
+            y_off = info.get("y_offset", 0)
+            grp = _bl_group(glyph)
+
+            # Nudge
+            nudge_px = 0.0
+            if grp in _NUDGE_GROUPS and grp in set_medians:
+                nudge_px = -(set_medians[grp] - y_off)
+
+            ovr = overrides.get(glyph, {})
+            scale_mult = ovr.get("scale", 1.0)
+            extra_nudge_px = ovr.get("nudge", 0.0)
+
+            desired_h = bbox_h * _px_to_fu * scale_mult
+            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
+            total_nudge_fu = (nudge_px + extra_nudge_px) * _px_to_fu
+
+            if set_idx == 0:
+                if len(glyph) == 1:
+                    base_name = f"uni{ord(glyph):04X}"
+                    slot_create = f"font.createChar({_glyph_slot(glyph)}, \"{base_name}\")"
+                else:
+                    base_name = _lig_glyph_name(glyph)
+                    slot_create = f'font.createChar(-1, "{base_name}")'
+            else:
+                # Alternate glyph — unencoded, named with suffix
+                if len(glyph) == 1:
+                    base_name = f"uni{ord(glyph):04X}"
+                    alt_name = f"{base_name}{suffix}"
+                else:
+                    base_name = _lig_glyph_name(glyph)
+                    alt_name = f"{base_name}{suffix}"
+                slot_create = f'font.createChar(-1, "{alt_name}")'
+                alt_glyphs.setdefault(glyph, []).append(alt_name)
+
+            lines.append(textwrap.dedent(f"""\
+                # ── {glyph} set{set_idx}{suffix} ──
+                g = {slot_create}
+                g.importOutlines("{svg_path}")
+                bb = g.boundingBox()
+                svg_h = bb[3] - bb[1]
+                if svg_h > 0:
+                    sc = {desired_h:.2f} / svg_h
+                    g.transform(psMat.scale(sc))
+                    bb = g.boundingBox()
+                    descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
+                    shift_y = -descent_units - bb[1] + {total_nudge_fu:.2f}
+                    g.transform(psMat.translate(0, shift_y))
+                    bb = g.boundingBox()
+                    lsb = {DEFAULT_UPM} * 0.04
+                    g.left_side_bearing = int(lsb)
+                    g.right_side_bearing = int(lsb)
+                    g.width = int(bb[2] - bb[0] + 2 * lsb)
+            """))
+
+    # ── Ligature lookups (base set only) ──
+    all_ligs = []
+    for lig in LIGATURES + EXTRA_LIGATURES:
+        if lig in sets[0]["svg_map"]:
+            components = " ".join(lig)
+            name = _lig_glyph_name(lig)
+            all_ligs.append((lig, components, name))
+
+    if all_ligs:
+        lines.append(textwrap.dedent("""\
+            font.addLookup("liga", "gsub_ligature", (), (("liga",(("latn",("dflt")),)),))
+            font.addLookupSubtable("liga", "liga-1")
+        """))
+        for lig, components, name in all_ligs:
+            component_tuple = "(" + ",".join(f'"{c}"' for c in lig) + ",)"
+            lines.append(f'font["{name}"].addPosSub("liga-1", {component_tuple})\n')
+
+    # ── Contextual alternates (calt) ──
+    if n_sets > 1 and alt_glyphs:
+        # Generate .fea feature code for calt cycling.
+        # Split printable ASCII into N-1 groups; after group K char, use alt(K+1).
+        # This gives pseudo-random variation.
+        all_chars = sorted(
+            set(g for g in sets[0]["svg_map"] if len(g) == 1),
+            key=lambda c: ord(c),
+        )
+        n_alts = n_sets - 1
+        char_groups: list[list[str]] = [[] for _ in range(n_alts)]
+        for i, c in enumerate(all_chars):
+            char_groups[i % n_alts].append(c)
+
+        fea_lines = []
+        for group_idx in range(n_alts):
+            group_names = []
+            for c in char_groups[group_idx]:
+                if c == " ":
+                    group_names.append("space")
+                else:
+                    group_names.append(f"uni{ord(c):04X}")
+            fea_lines.append(
+                f"@ctx_group{group_idx} = [{' '.join(group_names)}];"
+            )
+
+        fea_lines.append("")
+        fea_lines.append("feature calt {")
+        for group_idx in range(n_alts):
+            alt_suffix_idx = group_idx + 1
+            fea_lines.append(f"  lookup calt_alt{alt_suffix_idx} {{")
+            for glyph, alt_names in sorted(alt_glyphs.items()):
+                if alt_suffix_idx <= len(alt_names):
+                    alt_name = alt_names[alt_suffix_idx - 1]
+                    if len(glyph) == 1:
+                        base_name = f"uni{ord(glyph):04X}"
+                    else:
+                        base_name = _lig_glyph_name(glyph)
+                    fea_lines.append(
+                        f"    sub @ctx_group{group_idx} {base_name}' by {alt_name};"
+                    )
+            fea_lines.append(f"  }} calt_alt{alt_suffix_idx};")
+        fea_lines.append("} calt;")
+
+        fea_code = "\n".join(fea_lines)
+
+        # Write .fea to a temp file and merge
+        lines.append(textwrap.dedent(f"""\
+            import tempfile, os
+            fea_code = {fea_code!r}
+            fea_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".fea", delete=False
+            )
+            fea_file.write(fea_code)
+            fea_file.close()
+            font.mergeFeature(fea_file.name)
+            os.unlink(fea_file.name)
+        """))
+
+    # ── Space + generate ──
+    lines.append(textwrap.dedent(f"""\
+        space = font.createChar(0x0020)
+        space.width = {DEFAULT_UPM // 4}
+
+        font.generate("{output_otf}")
+        print(f"Generated: {output_otf}")
+    """))
+
+    return "\n".join(lines)
+
+
+def compile_font_multiset(
+    extracted_dirs: list[Path],
+    overrides_list: list[dict],
+    output_otf: str | Path = "output/Handwriting_MVP.otf",
+    dpi: int = 600,
+) -> Path:
+    """Compile a font from multiple extracted scan sets with calt alternates."""
+    output_otf = Path(output_otf)
+    output_otf.parent.mkdir(parents=True, exist_ok=True)
+
+    sets = []
+    for i, (edir, ovr) in enumerate(zip(extracted_dirs, overrides_list)):
+        edir = Path(edir)
+        metadata = json.loads((edir / "metadata.json").read_text())
+        svg_map = vectorize_all(edir, edir / "svgs")
+        svg_str_map = {g: str(p.resolve()) for g, p in svg_map.items()}
+        sets.append({
+            "set_idx": i,
+            "svg_map": svg_str_map,
+            "metadata": metadata,
+            "overrides": ovr,
+        })
+
+    script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", prefix="ff_build_", delete=False,
+    ) as f:
+        f.write(script)
+        script_path = f.name
+
+    result = subprocess.run(
+        ["fontforge", "-script", script_path],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"FontForge failed (exit {result.returncode}):\n"
+            f"STDOUT: {result.stdout}\n"
+            f"STDERR: {result.stderr}\n"
+            f"Script: {script_path}"
+        )
+
+    Path(script_path).unlink(missing_ok=True)
+    return output_otf
 
 def compile_font(
     extracted_dir: str | Path = "output/extracted",

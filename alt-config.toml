@@ -1,10 +1,12 @@
-# Per-glyph overrides for alt1/alt2 scan set.
-# scale: multiplier on glyph size (e.g. 0.8 = 80% of extracted size)
-# nudge: vertical shift in pixels (positive = up, negative = down)
+# Multi-set config for hw2font.
+# Each [[sets]] entry is a scan set (2 pages per set).
+# The font will cycle between sets using contextual alternates (calt).
 
-[overrides.a]
-scale = 0.8
+[[sets]]
+scans = ["extract1.png", "extract2.png"]
 
-[overrides.i]
-scale = 0.9
-nudge = 10
+[[sets]]
+scans = ["alt1.png", "alt2.png"]
+overrides.a.scale = 0.8
+overrides.i.scale = 0.9
+overrides.i.nudge = 10
