@@ -767,6 +767,7 @@ def compile_font_multiset(
     font_name: str | None = None,
     kern_cfg: dict | None = None,
     per_set_kerns: list[dict] | None = None,
+    borrows_list: list[dict] | None = None,
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
@@ -774,6 +775,8 @@ def compile_font_multiset(
 
     if per_set_kerns is None:
         per_set_kerns = [{} for _ in extracted_dirs]
+    if borrows_list is None:
+        borrows_list = [{} for _ in extracted_dirs]
 
     sets = []
     for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
@@ -788,6 +791,19 @@ def compile_font_multiset(
             "overrides": ovr,
             "kern": skern,
         })
+
+    # Apply borrows: replace glyphs with versions from other sets
+    for i, borrows in enumerate(borrows_list):
+        for glyph, source_set_idx in borrows.items():
+            source_set_idx = int(source_set_idx)
+            if source_set_idx < 0 or source_set_idx >= len(sets):
+                click.echo(f"  ⚠ borrow.{glyph!r} = {source_set_idx}: set index out of range, skipping")
+                continue
+            source_svg = sets[source_set_idx]["svg_map"].get(glyph)
+            if source_svg is None:
+                click.echo(f"  ⚠ borrow.{glyph!r} = {source_set_idx}: glyph not found in set {source_set_idx}, skipping")
+                continue
+            sets[i]["svg_map"][glyph] = source_svg
 
     script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg)
 

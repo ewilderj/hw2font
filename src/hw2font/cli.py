@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -178,6 +179,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
     extracted_dirs: list[Path] = []
     overrides_list: list[dict] = []
     per_set_kerns: list[dict] = []
+    borrows_list: list[dict] = []
     output_base = Path("output/extracted")
 
     for i, s in enumerate(sets):
@@ -193,6 +195,28 @@ def build(config: str, output: str | None, dpi: int) -> None:
         extracted_dirs.append(out_dir)
         overrides_list.append(s.get("overrides", {}))
         per_set_kerns.append(s.get("kern", {}))
+        borrows_list.append(s.get("borrow", {}))
+
+    # Apply borrows at the extracted-glyph level (copy PNGs between sets)
+    for i, borrows in enumerate(borrows_list):
+        for glyph, source_idx in borrows.items():
+            source_idx = int(source_idx)
+            if source_idx < 0 or source_idx >= len(extracted_dirs):
+                continue
+            src_dir = extracted_dirs[source_idx] / "glyphs"
+            dst_dir = extracted_dirs[i] / "glyphs"
+            # Determine the filename for this glyph
+            if len(glyph) == 1:
+                fname = f"U+{ord(glyph):04X}.png"
+            else:
+                fname = f"lig_{''.join(glyph)}.png"
+            src_file = src_dir / fname
+            dst_file = dst_dir / fname
+            if src_file.exists():
+                shutil.copy2(src_file, dst_file)
+                click.echo(f"  Set {i}: borrowed {glyph!r} from set {source_idx}")
+            else:
+                click.echo(f"  ⚠ Set {i}: borrow {glyph!r} from set {source_idx} — not found")
 
     # Generate per-set proof sheets so each set can be reviewed independently
     for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
@@ -210,6 +234,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
     path = compile_font_multiset(
         extracted_dirs, overrides_list, output, dpi,
         font_name=font_name, kern_cfg=kern_cfg, per_set_kerns=per_set_kerns,
+        borrows_list=borrows_list,
     )
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 
