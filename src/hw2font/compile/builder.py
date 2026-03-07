@@ -714,8 +714,12 @@ def _add_calt_with_fonttools(otf_path: Path, alt_glyphs: dict[str, list[str]]) -
 
     The strategy: define a single-substitution lookup (outside the feature
     block so it's not applied directly), then a contextual lookup that
-    triggers it when the preceding glyph is any base character.  This
-    produces a natural base/alt/base/alt alternation pattern.
+    triggers it when the preceding glyph is in a context class.
+
+    To avoid strict base/alt/base/alt, we include .alt1 versions of
+    SOME characters (even codepoints) in the context class.  This makes
+    the substitution pattern depend on the preceding character's identity,
+    producing pseudo-random runs of base and alternate glyphs.
     """
     from fontTools.feaLib.builder import addOpenTypeFeatures
     from fontTools.ttLib import TTFont
@@ -723,15 +727,24 @@ def _add_calt_with_fonttools(otf_path: Path, alt_glyphs: dict[str, list[str]]) -
     if not alt_glyphs:
         return
 
-    # Collect all base glyph names that have alternates
-    all_base_names: list[str] = []
+    # Build context class: ALL base glyphs + alt glyphs of even-codepoint chars.
+    # After a base char → always substitute (base is always in @CTX).
+    # After an alt char of an even-codepoint original → also substitute (in @CTX).
+    # After an alt char of an odd-codepoint original → DON'T substitute (not in @CTX).
+    # This breaks the strict alternation into irregular runs.
+    ctx_names: list[str] = []
     for glyph in sorted(alt_glyphs.keys()):
         if len(glyph) == 1:
-            all_base_names.append(f"uni{ord(glyph):04X}")
+            base_name = f"uni{ord(glyph):04X}"
+            ctx_names.append(base_name)
+            # Include alt versions for even-codepoint chars
+            if ord(glyph) % 2 == 0:
+                for alt_name in alt_glyphs[glyph]:
+                    ctx_names.append(alt_name)
         else:
-            all_base_names.append(_lig_glyph_name(glyph))
+            ctx_names.append(_lig_glyph_name(glyph))
 
-    all_ctx = " ".join(all_base_names)
+    all_ctx = " ".join(ctx_names)
 
     n_alts = max(len(v) for v in alt_glyphs.values())
     fea_lines: list[str] = []
