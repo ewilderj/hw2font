@@ -1,0 +1,28 @@
+[project]
+name = "hw2font"
+version = "0.1.0"
+description = "Convert scanned handwriting templates into OpenType fonts"
+readme = "README.md"
+authors = [
+    { name = "Edd Wilder-James", email = "edd@me.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "click>=8.3.1",
+    "numpy>=2.4.2",
+    "opencv-python>=4.13.0.92",
+    "pillow>=12.1.1",
+    "reportlab>=4.4.10",
+]
+
+[project.scripts]
+hw2font = "hw2font.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.0,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
