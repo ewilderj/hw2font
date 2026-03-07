@@ -26,6 +26,47 @@ def _load_overrides(config_path: str | None) -> dict:
     return data.get("overrides", {})
 
 
+def _apply_borrows(
+    borrows_list: list[dict],
+    extracted_dirs: list[Path],
+) -> None:
+    """Copy borrowed glyph PNGs and metadata between extracted sets.
+
+    For each set, ``borrows_list[i]`` maps glyph strings to the source
+    set index to borrow from.  Both the PNG file and the metadata.json
+    entry are copied so that scaling/positioning stays correct.
+    """
+    for i, borrows in enumerate(borrows_list):
+        if not borrows:
+            continue
+        dst_meta_path = extracted_dirs[i] / "metadata.json"
+        dst_meta = json.loads(dst_meta_path.read_text())
+        changed = False
+        for glyph, source_idx in borrows.items():
+            source_idx = int(source_idx)
+            if source_idx < 0 or source_idx >= len(extracted_dirs):
+                continue
+            src_dir = extracted_dirs[source_idx] / "glyphs"
+            dst_dir = extracted_dirs[i] / "glyphs"
+            if len(glyph) == 1:
+                fname = f"U+{ord(glyph):04X}.png"
+            else:
+                fname = f"lig_{''.join(glyph)}.png"
+            src_file = src_dir / fname
+            dst_file = dst_dir / fname
+            if not src_file.exists():
+                click.echo(f"  ⚠ Set {i}: borrow {glyph!r} from set {source_idx} — not found")
+                continue
+            shutil.copy2(src_file, dst_file)
+            src_meta = json.loads((extracted_dirs[source_idx] / "metadata.json").read_text())
+            if glyph in src_meta:
+                dst_meta[glyph] = src_meta[glyph]
+                changed = True
+            click.echo(f"  Set {i}: borrowed {glyph!r} from set {source_idx}")
+        if changed:
+            dst_meta_path.write_text(json.dumps(dst_meta, indent=2))
+
+
 @click.group()
 @click.version_option(package_name="hw2font")
 def main() -> None:
@@ -199,36 +240,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
         borrows_list.append(s.get("borrow", {}))
 
     # Apply borrows at the extracted-glyph level (copy PNGs + metadata)
-    for i, borrows in enumerate(borrows_list):
-        if not borrows:
-            continue
-        dst_meta_path = extracted_dirs[i] / "metadata.json"
-        dst_meta = json.loads(dst_meta_path.read_text())
-        changed = False
-        for glyph, source_idx in borrows.items():
-            source_idx = int(source_idx)
-            if source_idx < 0 or source_idx >= len(extracted_dirs):
-                continue
-            src_dir = extracted_dirs[source_idx] / "glyphs"
-            dst_dir = extracted_dirs[i] / "glyphs"
-            if len(glyph) == 1:
-                fname = f"U+{ord(glyph):04X}.png"
-            else:
-                fname = f"lig_{''.join(glyph)}.png"
-            src_file = src_dir / fname
-            dst_file = dst_dir / fname
-            if not src_file.exists():
-                click.echo(f"  ⚠ Set {i}: borrow {glyph!r} from set {source_idx} — not found")
-                continue
-            shutil.copy2(src_file, dst_file)
-            # Also copy the metadata entry so scaling/positioning is correct
-            src_meta = json.loads((extracted_dirs[source_idx] / "metadata.json").read_text())
-            if glyph in src_meta:
-                dst_meta[glyph] = src_meta[glyph]
-                changed = True
-            click.echo(f"  Set {i}: borrowed {glyph!r} from set {source_idx}")
-        if changed:
-            dst_meta_path.write_text(json.dumps(dst_meta, indent=2))
+    _apply_borrows(borrows_list, extracted_dirs)
 
     # Generate per-set proof sheets so each set can be reviewed independently
     for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
