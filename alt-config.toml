@@ -14,6 +14,8 @@
 #               overrides."?".nudge = 3
 #   Ligatures:  overrides.th.scale = 1.1         # multi-char key = ligature
 #               overrides.qu.nudge = -8
+#   Special:    overrides."♥".scale = 0.9        # Unicode chars in quotes
+#               overrides."☺".nudge = -3
 
 name = "Edd Handwriting"
 
