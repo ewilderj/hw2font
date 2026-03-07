@@ -166,14 +166,11 @@ def _build_fontforge_script(
         info = metadata.get(glyph, {})
         y_off = info.get("y_offset", 0)
         bbox_h = info.get("bbox_h", 1)
-        above_bl = bbox_h - y_off if bbox_h > 0 else 0
 
         if len(glyph) == 1:
             slot = f"font.createChar({_glyph_slot(glyph)})"
         else:
             slot = f'font.createChar(-1, "{_lig_glyph_name(glyph)}")'
-
-        cls = _glyph_class(glyph, y_off, bbox_h)
 
         glyph_entries.append({
             "glyph": glyph,
@@ -181,31 +178,16 @@ def _build_fontforge_script(
             "slot_code": slot,
             "y_offset": y_off,
             "bbox_h": bbox_h,
-            "above_bl": above_bl,
-            "cls": cls,
             "is_uc": glyph.isupper() and len(glyph) == 1,
         })
 
-    # Compute median metrics for x-height letters
-    xh_bbox_heights = sorted(
-        [e["bbox_h"] for e in glyph_entries if e["cls"] == "lc_xh"]
-    )
-    xh_y_offsets = sorted(
-        [e["y_offset"] for e in glyph_entries if e["cls"] == "lc_xh"]
-    )
-    median_xh_bbox = xh_bbox_heights[len(xh_bbox_heights) // 2] if xh_bbox_heights else 120
-    median_xh_yoff = xh_y_offsets[len(xh_y_offsets) // 2] if xh_y_offsets else 10
-    # Standard descent fraction for x-height letters
-    std_yoff_frac = max(0, median_xh_yoff) / median_xh_bbox if median_xh_bbox > 0 else 0.15
-
-    # Compute font unit targets in Python for embedding in FontForge script
-    _cap_target = DEFAULT_ASCENT * 0.85
-    _xh_target = _cap_target * 0.65
-    _xh_above_bl = _xh_target * (1 - std_yoff_frac)
-
-    # Compute median UC pixel height for symbol proportional scaling
+    # ── Universal scale factor ──
+    # Trust that the user wrote each glyph at the intended relative size.
+    # One px→font-unit ratio derived from uppercase caps height.
     uc_px_heights = sorted([e["bbox_h"] for e in glyph_entries if e["is_uc"]])
     median_uc_px = uc_px_heights[len(uc_px_heights) // 2] if uc_px_heights else 200
+    _cap_target = DEFAULT_ASCENT * 0.85  # 680
+    _px_to_fu = _cap_target / median_uc_px  # pixels → font units
 
     lines.append(textwrap.dedent(f"""\
         import fontforge
@@ -220,9 +202,7 @@ def _build_fontforge_script(
         font.ascent = {DEFAULT_ASCENT}
         font.descent = {DEFAULT_DESCENT}
 
-        cap_target = {DEFAULT_ASCENT} * 0.85   # 680
-        xh_target  = cap_target * 0.65          # 442
-        xh_above_bl = {_xh_above_bl:.1f}        # x-height body above baseline
+        px_to_fu = {_px_to_fu:.6f}  # universal pixels → font units
 
         # ── Pass 1: Import all glyphs ──
     """))
@@ -235,103 +215,37 @@ def _build_fontforge_script(
 
     lines.append(textwrap.dedent("""\
 
-        # ── Pass 2: Per-glyph scale and position ──
+        # ── Pass 2: Scale and position each glyph ──
     """))
 
     for e in glyph_entries:
         glyph = e["glyph"]
-        y_off = e["y_offset"]
         bbox_h = e["bbox_h"]
-        above_bl = e["above_bl"]
-        cls = e["cls"]
+        y_off = e["y_offset"]
 
         accessor = e["slot_code"]
+        desired_h = bbox_h * _px_to_fu
+        descent_fu = y_off * _px_to_fu
+        yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
 
-        # Determine scale strategy and y-offset strategy per class.
-        # ref_frac: fraction of imported SVG height that maps to target.
-        # yoff_frac: fraction of final glyph height below baseline.
-        if cls == "sym":
-            pixel_ratio = bbox_h / median_uc_px if median_uc_px > 0 else 1.0
-            ref_frac = None
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        elif cls in ("uc", "digit"):
-            ref_frac = 1.0
-            target_var = "cap_target"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        elif cls == "uc_desc":
-            ref_frac = above_bl / bbox_h if bbox_h > 0 else 1.0
-            target_var = "cap_target"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        elif cls == "lc_xh":
-            ref_frac = 1.0
-            target_var = "xh_target"
-            yoff_frac = std_yoff_frac
-        elif cls == "lc_asc":
-            ref_frac = 1.0
-            target_var = "cap_target"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        elif cls == "lc_desc":
-            # Descender: above-baseline → xh_above_bl (matching x-height body)
-            ref_frac = above_bl / bbox_h if bbox_h > 0 and above_bl > 10 else 1.0
-            target_var = "xh_above_bl"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        elif cls == "lig_xh":
-            ref_frac = 1.0
-            target_var = "xh_target"
-            yoff_frac = std_yoff_frac
-        elif cls == "lig_asc":
-            ref_frac = 1.0
-            target_var = "cap_target"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        elif cls == "lig_desc":
-            ref_frac = above_bl / bbox_h if bbox_h > 0 and above_bl > 10 else 1.0
-            target_var = "xh_above_bl"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        else:
-            ref_frac = 1.0
-            target_var = "cap_target"
-            yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-
-        if ref_frac is None:
-            # Symbol path
-            lines.append(textwrap.dedent(f"""\
-                # ── {glyph} ({cls}) ──
-                g = {accessor}
+        lines.append(textwrap.dedent(f"""\
+            # ── {glyph} ──
+            g = {accessor}
+            bb = g.boundingBox()
+            svg_h = bb[3] - bb[1]
+            if svg_h > 0:
+                sc = {desired_h:.2f} / svg_h
+                g.transform(psMat.scale(sc))
                 bb = g.boundingBox()
-                svg_h = bb[3] - bb[1]
-                if svg_h > 0:
-                    sc = {pixel_ratio:.4f} * cap_target / svg_h
-                    g.transform(psMat.scale(sc))
-                    bb = g.boundingBox()
-                    descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
-                    shift_y = -descent_units - bb[1]
-                    g.transform(psMat.translate(0, shift_y))
-                    bb = g.boundingBox()
-                    lsb = {DEFAULT_UPM} * 0.04
-                    g.left_side_bearing = int(lsb)
-                    g.right_side_bearing = int(lsb)
-                    g.width = int(bb[2] - bb[0] + 2 * lsb)
-            """))
-        else:
-            lines.append(textwrap.dedent(f"""\
-                # ── {glyph} ({cls}) ──
-                g = {accessor}
+                descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
+                shift_y = -descent_units - bb[1]
+                g.transform(psMat.translate(0, shift_y))
                 bb = g.boundingBox()
-                svg_h = bb[3] - bb[1]
-                if svg_h > 0:
-                    ref_svg = svg_h * {ref_frac:.4f}
-                    sc = {target_var} / ref_svg if ref_svg > 0 else 1.0
-                    g.transform(psMat.scale(sc))
-                    bb = g.boundingBox()
-                    descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
-                    shift_y = -descent_units - bb[1]
-                    g.transform(psMat.translate(0, shift_y))
-                    bb = g.boundingBox()
-                    lsb = {DEFAULT_UPM} * 0.04
-                    g.left_side_bearing = int(lsb)
-                    g.right_side_bearing = int(lsb)
-                    g.width = int(bb[2] - bb[0] + 2 * lsb)
-            """))
+                lsb = {DEFAULT_UPM} * 0.04
+                g.left_side_bearing = int(lsb)
+                g.right_side_bearing = int(lsb)
+                g.width = int(bb[2] - bb[0] + 2 * lsb)
+        """))
 
     # Build OpenType feature lookups for ligatures
     all_ligs = []
