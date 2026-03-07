@@ -189,6 +189,47 @@ def _build_fontforge_script(
     _cap_target = DEFAULT_ASCENT * 0.85  # 680
     _px_to_fu = _cap_target / median_uc_px  # pixels → font units
 
+    # ── Baseline nudge ──
+    # Compute median y_offset per baseline group and nudge outliers toward it.
+    # This corrects glyphs the user didn't perfectly place on the baseline
+    # without changing their size.
+    _NON_DESC_LC = _XH_ONLY | _LC_ASCENDER
+    import statistics as _stats
+
+    def _baseline_group(g: str, y_offset: float, bbox_h: float) -> str:
+        """Group glyphs by expected baseline behaviour."""
+        if len(g) == 1:
+            if g in _NON_DESC_LC:
+                return "lc_nondesc"
+            if g in _LC_DESCENDER:
+                return "lc_desc"
+            if g.isupper():
+                # UC with real descenders (Q, Y, J-sometimes) get own group
+                if bbox_h > 0 and y_offset / bbox_h > _DESCENDER_THRESHOLD:
+                    return "uc_desc"
+                return "uc_digit"
+            if g.isdigit():
+                return "uc_digit"
+        elif len(g) > 1:
+            if any(c in _LC_DESCENDER for c in g):
+                return "lc_desc"
+            return "lc_nondesc"
+        return "sym"
+
+    groups: dict[str, list[float]] = {}
+    for e in glyph_entries:
+        grp = _baseline_group(e["glyph"], e["y_offset"], e["bbox_h"])
+        e["bl_group"] = grp
+        groups.setdefault(grp, []).append(e["y_offset"])
+
+    group_medians = {
+        grp: _stats.median(offsets) for grp, offsets in groups.items()
+    }
+
+    for e in glyph_entries:
+        grp = e["bl_group"]
+        e["nudge_px"] = group_medians[grp] - e["y_offset"]
+
     lines.append(textwrap.dedent(f"""\
         import fontforge
         import psMat
@@ -222,14 +263,15 @@ def _build_fontforge_script(
         glyph = e["glyph"]
         bbox_h = e["bbox_h"]
         y_off = e["y_offset"]
+        nudge_px = e["nudge_px"]
 
         accessor = e["slot_code"]
         desired_h = bbox_h * _px_to_fu
-        descent_fu = y_off * _px_to_fu
         yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
+        nudge_fu = nudge_px * _px_to_fu
 
         lines.append(textwrap.dedent(f"""\
-            # ── {glyph} ──
+            # ── {glyph} (nudge {nudge_px:+.1f}px) ──
             g = {accessor}
             bb = g.boundingBox()
             svg_h = bb[3] - bb[1]
@@ -238,7 +280,7 @@ def _build_fontforge_script(
                 g.transform(psMat.scale(sc))
                 bb = g.boundingBox()
                 descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
-                shift_y = -descent_units - bb[1]
+                shift_y = -descent_units - bb[1] + {nudge_fu:.2f}
                 g.transform(psMat.translate(0, shift_y))
                 bb = g.boundingBox()
                 lsb = {DEFAULT_UPM} * 0.04
