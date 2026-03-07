@@ -277,8 +277,10 @@ def _process_cell(
         elif i != largest_idx:
             # Remove components that are far from the main stroke and tiny
             # relative to it — these are border/noise fragments.
+            # Only filter components BELOW the main body (border remnants).
+            # Components ABOVE are kept (dots on i/j, diacritics).
             cy = centroids[i][1]
-            if (cy < largest_top - 20 or cy > largest_bot + 20) and \
+            if cy > largest_bot + 20 and \
                stats[i, cv2.CC_STAT_AREA] < largest_area * 0.15:
                 binary[labels == i] = 0
 

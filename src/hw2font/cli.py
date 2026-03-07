@@ -2,9 +2,31 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import click
+
+
+def _load_overrides(config_path: str | None) -> dict:
+    """Load per-glyph overrides from a TOML config file.
+
+    Expected format::
+
+        [overrides.a]
+        scale = 0.8
+
+        [overrides.i]
+        scale = 0.9
+        nudge = 10    # pixels up (positive = up)
+    """
+    if not config_path:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    data = tomllib.loads(path.read_text())
+    return data.get("overrides", {})
 
 
 @click.group()
@@ -85,11 +107,22 @@ def extract(scans: tuple[str, ...], output: str, dpi: int) -> None:
     type=int,
     help="DPI used during scanning (for scale calculations).",
 )
-def compile(extracted_dir: str, output: str, dpi: int) -> None:
+@click.option(
+    "-c",
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="TOML config file with per-glyph overrides (scale, nudge).",
+)
+def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) -> None:
     """Vectorize extracted glyphs and compile into an OpenType font."""
     from hw2font.compile.builder import compile_font
 
-    path = compile_font(extracted_dir, output, dpi)
+    overrides = _load_overrides(config_path)
+    if overrides:
+        click.echo(f"  Loaded {len(overrides)} glyph override(s) from {config_path}")
+    path = compile_font(extracted_dir, output, dpi, overrides)
     click.echo(f"✓ Font compiled → {path}")
 
 

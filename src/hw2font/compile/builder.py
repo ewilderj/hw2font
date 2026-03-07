@@ -156,8 +156,17 @@ def _build_fontforge_script(
     metadata_path: str,
     output_otf: str,
     dpi: int,
+    overrides: dict | None = None,
 ) -> str:
-    """Generate a FontForge Python script as a string."""
+    """Generate a FontForge Python script as a string.
+
+    overrides: per-glyph tweaks from config file, keyed by glyph string.
+        Each value is a dict with optional keys:
+          - "scale": float multiplier (e.g. 0.8)
+          - "nudge": float pixels to shift vertically (positive = up)
+    """
+    if overrides is None:
+        overrides = {}
 
     lines: list[str] = []
 
@@ -266,13 +275,18 @@ def _build_fontforge_script(
         y_off = e["y_offset"]
         nudge_px = e["nudge_px"]
 
+        # Apply per-glyph overrides from config
+        ovr = overrides.get(glyph, {})
+        scale_mult = ovr.get("scale", 1.0)
+        extra_nudge_px = ovr.get("nudge", 0.0)
+
         accessor = e["slot_code"]
-        desired_h = bbox_h * _px_to_fu
+        desired_h = bbox_h * _px_to_fu * scale_mult
         yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
-        nudge_fu = nudge_px * _px_to_fu
+        total_nudge_fu = (nudge_px + extra_nudge_px) * _px_to_fu
 
         lines.append(textwrap.dedent(f"""\
-            # ── {glyph} (nudge {nudge_px:+.1f}px) ──
+            # ── {glyph} (nudge {nudge_px:+.1f}px, ovr scale={scale_mult}, ovr nudge={extra_nudge_px:+.1f}px) ──
             g = {accessor}
             bb = g.boundingBox()
             svg_h = bb[3] - bb[1]
@@ -281,7 +295,7 @@ def _build_fontforge_script(
                 g.transform(psMat.scale(sc))
                 bb = g.boundingBox()
                 descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
-                shift_y = -descent_units - bb[1] + {nudge_fu:.2f}
+                shift_y = -descent_units - bb[1] + {total_nudge_fu:.2f}
                 g.transform(psMat.translate(0, shift_y))
                 bb = g.boundingBox()
                 lsb = {DEFAULT_UPM} * 0.04
@@ -330,6 +344,7 @@ def compile_font(
     extracted_dir: str | Path = "output/extracted",
     output_otf: str | Path = "output/Handwriting_MVP.otf",
     dpi: int = 600,
+    overrides: dict | None = None,
 ) -> Path:
     """Full Module C pipeline: vectorize → assemble → compile .otf."""
     extracted_dir = Path(extracted_dir)
@@ -345,7 +360,10 @@ def compile_font(
     # Step 2: Generate FontForge script
     svg_str_map = {g: str(p.resolve()) for g, p in svg_map.items()}
     metadata_path = str((extracted_dir / "metadata.json").resolve())
-    script = _build_fontforge_script(svg_str_map, metadata, metadata_path, str(output_otf.resolve()), dpi)
+    script = _build_fontforge_script(
+        svg_str_map, metadata, metadata_path,
+        str(output_otf.resolve()), dpi, overrides,
+    )
 
     # Step 3: Run FontForge
     with tempfile.NamedTemporaryFile(
