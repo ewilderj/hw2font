@@ -681,63 +681,10 @@ def _build_multiset_fontforge_script(
             lines.append(f'font["{name}"].addPosSub("liga-1", {component_tuple})\n')
 
     # ── Contextual alternates (calt) ──
-    if n_sets > 1 and alt_glyphs:
-        # Generate .fea feature code for calt cycling.
-        # Split printable ASCII into N-1 groups; after group K char, use alt(K+1).
-        # This gives pseudo-random variation.
-        all_chars = sorted(
-            set(g for g in sets[0]["svg_map"] if len(g) == 1),
-            key=lambda c: ord(c),
-        )
-        n_alts = n_sets - 1
-        char_groups: list[list[str]] = [[] for _ in range(n_alts)]
-        for i, c in enumerate(all_chars):
-            char_groups[i % n_alts].append(c)
-
-        fea_lines = []
-        for group_idx in range(n_alts):
-            group_names = []
-            for c in char_groups[group_idx]:
-                if c == " ":
-                    group_names.append("space")
-                else:
-                    group_names.append(f"uni{ord(c):04X}")
-            fea_lines.append(
-                f"@ctx_group{group_idx} = [{' '.join(group_names)}];"
-            )
-
-        fea_lines.append("")
-        fea_lines.append("feature calt {")
-        for group_idx in range(n_alts):
-            alt_suffix_idx = group_idx + 1
-            fea_lines.append(f"  lookup calt_alt{alt_suffix_idx} {{")
-            for glyph, alt_names in sorted(alt_glyphs.items()):
-                if alt_suffix_idx <= len(alt_names):
-                    alt_name = alt_names[alt_suffix_idx - 1]
-                    if len(glyph) == 1:
-                        base_name = f"uni{ord(glyph):04X}"
-                    else:
-                        base_name = _lig_glyph_name(glyph)
-                    fea_lines.append(
-                        f"    sub @ctx_group{group_idx} {base_name}' by {alt_name};"
-                    )
-            fea_lines.append(f"  }} calt_alt{alt_suffix_idx};")
-        fea_lines.append("} calt;")
-
-        fea_code = "\n".join(fea_lines)
-
-        # Write .fea to a temp file and merge
-        lines.append(textwrap.dedent(f"""\
-            import tempfile, os
-            fea_code = {fea_code!r}
-            fea_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".fea", delete=False
-            )
-            fea_file.write(fea_code)
-            fea_file.close()
-            font.mergeFeature(fea_file.name)
-            os.unlink(fea_file.name)
-        """))
+    # NOTE: calt is applied AFTER font generation using fonttools' feaLib
+    # (FontForge's mergeFeature/addContextualSubtable produce broken output).
+    # We pass alt_glyphs back via a comment the caller can parse, but the
+    # actual .fea compilation happens in compile_font_multiset().
 
     # ── Kerning ──
     per_set_kerns = [s.get("kern", {}) for s in sets]
@@ -756,7 +703,84 @@ def _build_multiset_fontforge_script(
         print(f"Generated: {output_otf}")
     """))
 
-    return "\n".join(lines)
+    return "\n".join(lines), alt_glyphs
+
+
+def _add_calt_with_fonttools(otf_path: Path, alt_glyphs: dict[str, list[str]]) -> None:
+    """Add calt feature to a compiled font using fonttools' feaLib.
+
+    FontForge's mergeFeature/addContextualSubtable produce broken GSUB
+    tables.  fonttools' feaLib compiles correct OpenType features.
+
+    The strategy: define a single-substitution lookup (outside the feature
+    block so it's not applied directly), then a contextual lookup that
+    triggers it when the preceding glyph is any base character.  This
+    produces a natural base/alt/base/alt alternation pattern.
+    """
+    from fontTools.feaLib.builder import addOpenTypeFeatures
+    from fontTools.ttLib import TTFont
+
+    if not alt_glyphs:
+        return
+
+    # Collect all base glyph names that have alternates
+    all_base_names: list[str] = []
+    for glyph in sorted(alt_glyphs.keys()):
+        if len(glyph) == 1:
+            all_base_names.append(f"uni{ord(glyph):04X}")
+        else:
+            all_base_names.append(_lig_glyph_name(glyph))
+
+    all_ctx = " ".join(all_base_names)
+
+    n_alts = max(len(v) for v in alt_glyphs.values())
+    fea_lines: list[str] = []
+    fea_lines.append(f"@CTX = [{all_ctx}];")
+    fea_lines.append("")
+
+    # Single-sub lookups (outside feature block — only called by reference)
+    for alt_idx in range(n_alts):
+        alt_num = alt_idx + 1
+        fea_lines.append(f"lookup calt_single_{alt_num} {{")
+        for glyph, alt_names in sorted(alt_glyphs.items()):
+            if alt_num <= len(alt_names):
+                if len(glyph) == 1:
+                    base_name = f"uni{ord(glyph):04X}"
+                else:
+                    base_name = _lig_glyph_name(glyph)
+                fea_lines.append(f"    sub {base_name} by {alt_names[alt_num - 1]};")
+        fea_lines.append(f"}} calt_single_{alt_num};")
+        fea_lines.append("")
+
+    # Contextual lookup registered under calt feature
+    fea_lines.append("feature calt {")
+    for alt_idx in range(n_alts):
+        alt_num = alt_idx + 1
+        fea_lines.append(f"    lookup calt_ctx_{alt_num} {{")
+        for glyph, alt_names in sorted(alt_glyphs.items()):
+            if alt_num <= len(alt_names):
+                if len(glyph) == 1:
+                    base_name = f"uni{ord(glyph):04X}"
+                else:
+                    base_name = _lig_glyph_name(glyph)
+                fea_lines.append(
+                    f"        sub @CTX {base_name}' lookup calt_single_{alt_num};"
+                )
+        fea_lines.append(f"    }} calt_ctx_{alt_num};")
+    fea_lines.append("} calt;")
+
+    fea_code = "\n".join(fea_lines)
+
+    font = TTFont(str(otf_path))
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".fea", delete=False
+    ) as f:
+        f.write(fea_code)
+        fea_path = f.name
+
+    addOpenTypeFeatures(font, fea_path)
+    Path(fea_path).unlink(missing_ok=True)
+    font.save(str(otf_path))
 
 
 def compile_font_multiset(
@@ -805,7 +829,7 @@ def compile_font_multiset(
                 continue
             sets[i]["svg_map"][glyph] = source_svg
 
-    script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg)
+    script, alt_glyphs = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", prefix="ff_build_", delete=False,
@@ -828,6 +852,11 @@ def compile_font_multiset(
         )
 
     Path(script_path).unlink(missing_ok=True)
+
+    # Add calt feature via fonttools (FontForge can't produce valid calt)
+    if alt_glyphs:
+        _add_calt_with_fonttools(output_otf, alt_glyphs)
+
     return output_otf
 
 def compile_font(

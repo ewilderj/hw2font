@@ -52,10 +52,16 @@ overrides.a.scale = 0.8
 overrides.A.nudge = -20
 overrides.B.nudge = -20
 overrides.g.nudge = -20
+overrides.d.nudge = -10
 overrides.g.scale = 1.1
 overrides.o.scale = 0.9
 overrides.u.scale = 0.9
 overrides.s.scale = 0.9
+overrides.".".nudge = 30
+overrides.",".nudge = 40
+kern.right.v = -60
+kern.pairs.ve = -80
+overrides.x.nudge = -15
 
 [[sets]]
 scans = ["alt1.png", "alt2.png"]
@@ -64,6 +70,7 @@ overrides.i.scale = 0.9
 overrides.z.scale = 0.9
 overrides.i.nudge = 20
 overrides.j.nudge = 20
+overrides.".".nudge = 15
 # Per-set kerning (only affects this set's alternate glyphs)
 kern.right.x = -60
 # kern.pairs.xa = -60
