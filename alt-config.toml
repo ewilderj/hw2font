@@ -1,6 +1,19 @@
 # Multi-set config for hw2font.
 # Each [[sets]] entry is a scan set (2 pages per set).
 # The font will cycle between sets using contextual alternates (calt).
+#
+# Per-glyph overrides (under each set):
+#   scale  — multiplier on the glyph's size (e.g. 0.8 = 80%)
+#   nudge  — vertical shift in pixels (positive = up, negative = down)
+#
+# Override keys:
+#   Letters:    overrides.a.scale = 0.9
+#   Digits:     overrides."0".scale = 0.85      # quote digits
+#   Symbols:    overrides."!".nudge = -5         # quote punctuation/symbols
+#               overrides."@".scale = 0.7
+#               overrides."?".nudge = 3
+#   Ligatures:  overrides.th.scale = 1.1         # multi-char key = ligature
+#               overrides.qu.nudge = -8
 
 name = "Edd Handwriting"
 
@@ -12,3 +25,5 @@ scans = ["alt1.png", "alt2.png"]
 overrides.a.scale = 0.8
 overrides.i.scale = 0.9
 overrides.i.nudge = 10
+# overrides."!".scale = 0.9
+# overrides.th.nudge = -5
