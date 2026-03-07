@@ -1,4 +1,4 @@
-# Multi-set config for hw2font.
+# Multi-set config for hw2font — "Sailor" handwriting.
 # Each [[sets]] entry is a scan set (2 pages per set).
 # The font will cycle between sets using contextual alternates (calt).
 #
@@ -17,7 +17,7 @@
 #   Special:    overrides."♥".scale = 0.9        # Unicode chars in quotes
 #               overrides."☺".nudge = -3
 
-name = "EWJ Handwriting REF5P "
+name = "EWJ Handwriting Sailor"
 
 # Kerning (font units, negative = tighter).
 # Shape-based classes for uppercase → lowercase:
@@ -38,39 +38,22 @@ overhang_lc = -120
 round_lc = -60
 straight_lc = -40
 open_lc = -50
-right.x = -40
+# right.x = -40
 # left.o = -20
 # pairs.Ta = -150
 
 [[sets]]
-scans = ["images/extract1.png", "images/extract2.png"]
-# Borrow glyphs from another set (value = set index to borrow from)
+scans = ["images/sailor1.png", "images/sailor2.png"]
+# Borrow glyphs from another set (value = set index to borrow from):
 #   borrow."-" = 1               # use hyphen from set 1
-borrow."-" = 1
-overrides.d.scale = 1.1
-overrides.a.scale = 0.8
-overrides.A.nudge = -20
-overrides.B.nudge = -20
-overrides.g.nudge = -20
-overrides.d.nudge = -10
-overrides.g.scale = 1.1
-overrides.o.scale = 0.9
-overrides.u.scale = 0.9
-overrides.s.scale = 0.9
-overrides.".".nudge = 30
-overrides.",".nudge = 40
-kern.right.v = -60
-kern.pairs.ve = -80
-overrides.x.nudge = -15
+# Per-glyph overrides for this set:
+#   overrides.a.scale = 0.9
+#   overrides.".".nudge = 30
 
 [[sets]]
-scans = ["images/alt1.png", "images/alt2.png"]
-overrides.a.scale = 0.8
-overrides.i.scale = 0.9
-overrides.z.scale = 0.9
-overrides.i.nudge = 20
-overrides.j.nudge = 20
-overrides.".".nudge = 15
-# Per-set kerning (only affects this set's alternate glyphs)
-kern.right.x = -60
-# kern.pairs.xa = -60
+scans = ["images/sailor-alt1.png", "images/sailor-alt2.png"]
+# Per-glyph overrides for the alternate set:
+#   overrides.a.scale = 0.8
+# Per-set kerning (only affects this set's alternate glyphs):
+#   kern.right.x = -60
+#   kern.pairs.xa = -60
