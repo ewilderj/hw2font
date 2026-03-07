@@ -193,32 +193,28 @@ def _build_fontforge_script(
     # Compute median y_offset per baseline group and nudge outliers toward it.
     # This corrects glyphs the user didn't perfectly place on the baseline
     # without changing their size.
+    # Only applies to lowercase and ligatures — uppercase/digits/symbols
+    # don't need nudging since they're already well-anchored.
     _NON_DESC_LC = _XH_ONLY | _LC_ASCENDER
+    _NUDGE_GROUPS = {"lc_nondesc", "lc_desc"}
     import statistics as _stats
 
-    def _baseline_group(g: str, y_offset: float, bbox_h: float) -> str:
+    def _baseline_group(g: str) -> str:
         """Group glyphs by expected baseline behaviour."""
         if len(g) == 1:
             if g in _NON_DESC_LC:
                 return "lc_nondesc"
             if g in _LC_DESCENDER:
                 return "lc_desc"
-            if g.isupper():
-                # UC with real descenders (Q, Y, J-sometimes) get own group
-                if bbox_h > 0 and y_offset / bbox_h > _DESCENDER_THRESHOLD:
-                    return "uc_desc"
-                return "uc_digit"
-            if g.isdigit():
-                return "uc_digit"
         elif len(g) > 1:
             if any(c in _LC_DESCENDER for c in g):
                 return "lc_desc"
             return "lc_nondesc"
-        return "sym"
+        return "other"
 
     groups: dict[str, list[float]] = {}
     for e in glyph_entries:
-        grp = _baseline_group(e["glyph"], e["y_offset"], e["bbox_h"])
+        grp = _baseline_group(e["glyph"])
         e["bl_group"] = grp
         groups.setdefault(grp, []).append(e["y_offset"])
 
@@ -228,7 +224,12 @@ def _build_fontforge_script(
 
     for e in glyph_entries:
         grp = e["bl_group"]
-        e["nudge_px"] = group_medians[grp] - e["y_offset"]
+        if grp in _NUDGE_GROUPS:
+            # Negative sign: positive nudge_px means glyph floats high,
+            # needs to move DOWN in font coordinates (negative Y).
+            e["nudge_px"] = -(group_medians[grp] - e["y_offset"])
+        else:
+            e["nudge_px"] = 0.0
 
     lines.append(textwrap.dedent(f"""\
         import fontforge
