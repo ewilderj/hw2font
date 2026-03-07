@@ -33,6 +33,26 @@ DEFAULT_DESCENT = 200
 FONT_FAMILY = "Handwriting"
 FONT_NAME = "Handwriting_MVP"
 
+# Default kerning values (font units, negative = tighter)
+# Shape-based UC classes for right-side kerning:
+#   overhang: crossbar/diagonal extends over the space to the right (T, F, V, W, Y)
+#   round:    curved right side (C, G, O, Q, D)
+#   straight: vertical right side (H, I, M, N, B, E, K, L, R, U)
+#   open:     open right side (A, J, P, S, X, Z)
+_UC_SHAPE_CLASSES = {
+    "overhang": list("TFVWY"),
+    "round":    list("CGOQD"),
+    "straight": list("HIMNBEKLRU"),
+    "open":     list("AJPSXZ"),
+}
+
+DEFAULT_KERN = {
+    "overhang_lc":  -120,   # T, F, V, W, Y → lowercase
+    "round_lc":      -60,   # C, G, O, Q, D → lowercase
+    "straight_lc":   -40,   # H, I, M, N, … → lowercase
+    "open_lc":       -50,   # A, J, P, S, … → lowercase
+}
+
 # Potrace tuning — optimised for handwriting at 600 DPI
 _POTRACE_OPTS = [
     "--turdsize", "3",       # suppress specks ≤ 3 px
@@ -150,6 +170,53 @@ def _glyph_class(glyph: str, y_offset: float = 0, bbox_h: float = 1) -> str:
     return "sym"
 
 
+def _kern_lines(kern_cfg: dict) -> list[str]:
+    """Generate FontForge Python lines for shape-based kerning.
+
+    kern_cfg supports:
+      - Class defaults: overhang_lc, round_lc, straight_lc, open_lc
+      - Per-pair overrides: pairs.Ta = -150 (first char + second char)
+    Negative values tighten spacing.
+    """
+    merged = {**DEFAULT_KERN, **kern_cfg}
+    pair_overrides: dict = merged.pop("pairs", {})
+
+    # Build the per-pair kern map: (g1_name, g2_name) → value
+    def _name(c: str) -> str:
+        return f"uni{ord(c):04X}"
+
+    lc = list("abcdefghijklmnopqrstuvwxyz")
+    kern_map: dict[tuple[str, str], int] = {}
+
+    # Apply class defaults: each UC shape class → all lowercase
+    for class_key, uc_chars in _UC_SHAPE_CLASSES.items():
+        value = merged.get(f"{class_key}_lc", 0)
+        if value != 0:
+            for u in uc_chars:
+                for l in lc:
+                    kern_map[(_name(u), _name(l))] = value
+
+    # Apply per-pair overrides (higher priority, overwrites class values)
+    for pair_str, value in pair_overrides.items():
+        if len(pair_str) == 2:
+            kern_map[(_name(pair_str[0]), _name(pair_str[1]))] = value
+
+    # Drop zero-value pairs
+    kern_map = {k: v for k, v in kern_map.items() if v != 0}
+    if not kern_map:
+        return []
+
+    lines: list[str] = []
+    lines.append('font.addLookup("kern", "gpos_pair", (), '
+                  '(("kern",(("latn",("dflt")),)),))')
+    lines.append('font.addLookupSubtable("kern", "kern-1")')
+
+    for (g1, g2), value in sorted(kern_map.items()):
+        lines.append(f'font["{g1}"].addPosSub("kern-1", "{g2}", {value})')
+
+    return lines
+
+
 def _build_fontforge_script(
     svg_map: dict[str, str],
     metadata: dict,
@@ -158,6 +225,7 @@ def _build_fontforge_script(
     dpi: int,
     overrides: dict | None = None,
     font_name: str | None = None,
+    kern_cfg: dict | None = None,
 ) -> str:
     """Generate a FontForge Python script as a string.
 
@@ -178,7 +246,8 @@ def _build_fontforge_script(
         bbox_h = info.get("bbox_h", 1)
 
         if len(glyph) == 1:
-            slot = f"font.createChar({_glyph_slot(glyph)})"
+            glyph_name = f"uni{ord(glyph):04X}"
+            slot = f'font.createChar({_glyph_slot(glyph)}, "{glyph_name}")'
         else:
             slot = f'font.createChar(-1, "{_lig_glyph_name(glyph)}")'
 
@@ -326,6 +395,13 @@ def _build_fontforge_script(
                 f'font["{name}"].addPosSub("liga-1", {component_tuple})\n'
             )
 
+    # ── Kerning ──
+    klines = _kern_lines(kern_cfg or {})
+    if klines:
+        lines.append("")
+        lines.extend(klines)
+        lines.append("")
+
     # Set a space glyph
     lines.append(textwrap.dedent(f"""\
         # Space glyph
@@ -346,6 +422,7 @@ def _build_multiset_fontforge_script(
     output_otf: str,
     dpi: int,
     font_name: str | None = None,
+    kern_cfg: dict | None = None,
 ) -> str:
     """Generate a FontForge script that imports multiple glyph sets and
     creates contextual alternates (calt) to cycle between them.
@@ -559,6 +636,13 @@ def _build_multiset_fontforge_script(
             os.unlink(fea_file.name)
         """))
 
+    # ── Kerning ──
+    klines = _kern_lines(kern_cfg or {})
+    if klines:
+        lines.append("")
+        lines.extend(klines)
+        lines.append("")
+
     # ── Space + generate ──
     lines.append(textwrap.dedent(f"""\
         space = font.createChar(0x0020)
@@ -577,6 +661,7 @@ def compile_font_multiset(
     output_otf: str | Path = "output/Handwriting_MVP.otf",
     dpi: int = 600,
     font_name: str | None = None,
+    kern_cfg: dict | None = None,
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
@@ -595,7 +680,7 @@ def compile_font_multiset(
             "overrides": ovr,
         })
 
-    script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name)
+    script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", prefix="ff_build_", delete=False,
@@ -626,6 +711,7 @@ def compile_font(
     dpi: int = 600,
     overrides: dict | None = None,
     font_name: str | None = None,
+    kern_cfg: dict | None = None,
 ) -> Path:
     """Full Module C pipeline: vectorize → assemble → compile .otf."""
     extracted_dir = Path(extracted_dir)
@@ -643,7 +729,8 @@ def compile_font(
     metadata_path = str((extracted_dir / "metadata.json").resolve())
     script = _build_fontforge_script(
         svg_str_map, metadata, metadata_path,
-        str(output_otf.resolve()), dpi, overrides, font_name=font_name,
+        str(output_otf.resolve()), dpi, overrides,
+        font_name=font_name, kern_cfg=kern_cfg,
     )
 
     # Step 3: Run FontForge

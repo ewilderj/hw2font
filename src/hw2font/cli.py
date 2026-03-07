@@ -166,6 +166,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
         raise click.UsageError("Config file must contain at least one [[sets]] entry")
 
     font_name: str | None = cfg.get("name")
+    kern_cfg: dict = cfg.get("kern", {})
     if output is None:
         filename = (font_name or "Handwriting").replace(" ", "_") + ".otf"
         output = str(Path("output") / filename)
@@ -195,14 +196,14 @@ def build(config: str, output: str | None, dpi: int) -> None:
     for i, (edir, ovr) in enumerate(zip(extracted_dirs, overrides_list)):
         tmp_otf = output_base / f"set{i}" / "preview.otf"
         click.echo(f"  Set {i}: compiling preview font...")
-        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name)
+        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name, kern_cfg=kern_cfg)
         proof_path = Path(f"output/proof_set{i}.png")
         generate_proof(tmp_otf, proof_path)
         tmp_otf.unlink(missing_ok=True)
         click.echo(f"    ✓ Proof → {proof_path}")
 
     click.echo("  Compiling font with contextual alternates...")
-    path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi, font_name=font_name)
+    path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi, font_name=font_name, kern_cfg=kern_cfg)
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 
 

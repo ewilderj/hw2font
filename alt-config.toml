@@ -19,13 +19,34 @@
 
 name = "Edd Handwriting"
 
+# Kerning (font units, negative = tighter).
+# Shape-based classes for uppercase → lowercase:
+#   overhang_lc = T, F, V, W, Y  (default: -120)
+#   round_lc    = C, G, O, Q, D  (default: -60)
+#   straight_lc = H, I, M, N, …  (default: -40)
+#   open_lc     = A, J, P, S, …  (default: -50)
+# Per-pair overrides (two-char key = first + second glyph):
+#   pairs.Ta = -150              # override just T→a
+#   pairs.Yo = -130
+[kern]
+overhang_lc = -120
+round_lc = -60
+straight_lc = -40
+open_lc = -50
+# pairs.Ta = -150
+# pairs.Vo = -130
+
 [[sets]]
 scans = ["extract1.png", "extract2.png"]
+overrides.a.scale = 0.8
 
 [[sets]]
 scans = ["alt1.png", "alt2.png"]
 overrides.a.scale = 0.8
 overrides.i.scale = 0.9
 overrides.i.nudge = 10
+overrides.qu.nudge = -10
+overrides.o.scale = 0.9
+overrides.ing.scale = 1.1
 # overrides."!".scale = 0.9
 # overrides.th.nudge = -5
