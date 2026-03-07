@@ -30,6 +30,9 @@ name = "Edd Handwriting"
 #   left.o = -20                 # anything followed by o
 # Per-pair overrides (highest priority):
 #   pairs.Ta = -150              # override just T→a
+#
+# Global [kern] applies to all sets. Per-set kern (under [[sets]])
+# adds to / overrides the global values for that set's glyphs only.
 [kern]
 overhang_lc = -120
 round_lc = -60
@@ -41,15 +44,12 @@ open_lc = -50
 
 [[sets]]
 scans = ["extract1.png", "extract2.png"]
-overrides.a.scale = 0.8
 
 [[sets]]
 scans = ["alt1.png", "alt2.png"]
 overrides.a.scale = 0.8
 overrides.i.scale = 0.9
 overrides.i.nudge = 10
-overrides.qu.nudge = -10
-overrides.o.scale = 0.9
-overrides.ing.scale = 1.1
-# overrides."!".scale = 0.9
-# overrides.th.nudge = -5
+# Per-set kerning (only affects this set's alternate glyphs)
+kern.right.x = -40
+# kern.pairs.xa = -60

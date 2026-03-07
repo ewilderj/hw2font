@@ -177,6 +177,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
 
     extracted_dirs: list[Path] = []
     overrides_list: list[dict] = []
+    per_set_kerns: list[dict] = []
     output_base = Path("output/extracted")
 
     for i, s in enumerate(sets):
@@ -191,19 +192,25 @@ def build(config: str, output: str | None, dpi: int) -> None:
 
         extracted_dirs.append(out_dir)
         overrides_list.append(s.get("overrides", {}))
+        per_set_kerns.append(s.get("kern", {}))
 
     # Generate per-set proof sheets so each set can be reviewed independently
-    for i, (edir, ovr) in enumerate(zip(extracted_dirs, overrides_list)):
+    for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
+        # Merge global + set-level kern for the preview
+        merged_kern = {**kern_cfg, **skern} if skern else kern_cfg
         tmp_otf = output_base / f"set{i}" / "preview.otf"
         click.echo(f"  Set {i}: compiling preview font...")
-        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name, kern_cfg=kern_cfg)
+        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name, kern_cfg=merged_kern)
         proof_path = Path(f"output/proof_set{i}.png")
         generate_proof(tmp_otf, proof_path)
         tmp_otf.unlink(missing_ok=True)
         click.echo(f"    ✓ Proof → {proof_path}")
 
     click.echo("  Compiling font with contextual alternates...")
-    path = compile_font_multiset(extracted_dirs, overrides_list, output, dpi, font_name=font_name, kern_cfg=kern_cfg)
+    path = compile_font_multiset(
+        extracted_dirs, overrides_list, output, dpi,
+        font_name=font_name, kern_cfg=kern_cfg, per_set_kerns=per_set_kerns,
+    )
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 
 

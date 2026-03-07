@@ -170,23 +170,20 @@ def _glyph_class(glyph: str, y_offset: float = 0, bbox_h: float = 1) -> str:
     return "sym"
 
 
-def _kern_lines(kern_cfg: dict) -> list[str]:
-    """Generate FontForge Python lines for shape-based kerning.
+def _build_kern_map(kern_cfg: dict) -> dict[tuple[str, str], int]:
+    """Build a map of (glyph_char, glyph_char) → kern value from config.
 
     kern_cfg supports:
       - Class defaults: overhang_lc, round_lc, straight_lc, open_lc
-      - Per-pair overrides: pairs.Ta = -150 (first char + second char)
       - Right-side blanket: right.x = -40 (x followed by anything)
       - Left-side blanket:  left.o = -20 (anything followed by o)
-    Negative values tighten spacing.  Priority: pairs > right/left > classes.
+      - Per-pair overrides: pairs.Ta = -150 (first char + second char)
+    Priority: pairs > right/left > classes.
     """
     merged = {**DEFAULT_KERN, **kern_cfg}
     pair_overrides: dict = merged.pop("pairs", {})
     right_overrides: dict = merged.pop("right", {})
     left_overrides: dict = merged.pop("left", {})
-
-    def _name(c: str) -> str:
-        return f"uni{ord(c):04X}"
 
     all_letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
     lc = list("abcdefghijklmnopqrstuvwxyz")
@@ -198,28 +195,116 @@ def _kern_lines(kern_cfg: dict) -> list[str]:
         if value != 0:
             for u in uc_chars:
                 for l in lc:
-                    kern_map[(_name(u), _name(l))] = value
+                    kern_map[(u, l)] = value
 
     # 2. Right-side blanket: glyph followed by any letter
     for char, value in right_overrides.items():
         if len(char) == 1:
             for other in all_letters:
-                kern_map[(_name(char), _name(other))] = value
+                kern_map[(char, other)] = value
 
     # 3. Left-side blanket: any letter followed by glyph
     for char, value in left_overrides.items():
         if len(char) == 1:
             for other in all_letters:
-                kern_map[(_name(other), _name(char))] = value
+                kern_map[(other, char)] = value
 
     # 4. Per-pair overrides (highest priority)
     for pair_str, value in pair_overrides.items():
         if len(pair_str) == 2:
-            kern_map[(_name(pair_str[0]), _name(pair_str[1]))] = value
+            kern_map[(pair_str[0], pair_str[1])] = value
 
     # Drop zero-value pairs
-    kern_map = {k: v for k, v in kern_map.items() if v != 0}
+    return {k: v for k, v in kern_map.items() if v != 0}
+
+
+def _kern_lines(kern_cfg: dict) -> list[str]:
+    """Generate FontForge kern lines for a single-set font (base glyph names)."""
+    kern_map = _build_kern_map(kern_cfg)
     if not kern_map:
+        return []
+
+    def _name(c: str) -> str:
+        return f"uni{ord(c):04X}"
+
+    lines: list[str] = []
+    lines.append('font.addLookup("kern", "gpos_pair", (), '
+                  '(("kern",(("latn",("dflt")),)),))')
+    lines.append('font.addLookupSubtable("kern", "kern-1")')
+
+    for (c1, c2), value in sorted(kern_map.items()):
+        lines.append(f'font["{_name(c1)}"].addPosSub("kern-1", "{_name(c2)}", {value})')
+
+    return lines
+
+
+def _multiset_kern_lines(
+    global_kern: dict,
+    per_set_kerns: list[dict],
+    alt_glyphs: dict[str, list[str]],
+) -> list[str]:
+    """Generate kern lines for multi-set font: base glyphs + alternates.
+
+    Global kern applies to base (set 0) glyphs.  Each set's kern config
+    is merged on top of the global config for that set's alternate glyphs.
+    """
+    def _name(c: str) -> str:
+        return f"uni{ord(c):04X}"
+
+    # Base kern map from global config
+    base_map = _build_kern_map(global_kern)
+
+    # Per-set kern maps: merge global + set-specific
+    set_maps: list[dict[tuple[str, str], int]] = []
+    for set_kern in per_set_kerns:
+        if set_kern:
+            merged_cfg = {**global_kern}
+            # Deep-merge sub-dicts (pairs, right, left)
+            for key in ("pairs", "right", "left"):
+                if key in set_kern:
+                    merged_cfg.setdefault(key, {})
+                    if isinstance(merged_cfg[key], dict):
+                        merged_cfg[key] = {**merged_cfg[key], **set_kern[key]}
+                    else:
+                        merged_cfg[key] = set_kern[key]
+            # Override scalar keys
+            for key, val in set_kern.items():
+                if key not in ("pairs", "right", "left"):
+                    merged_cfg[key] = val
+            set_maps.append(_build_kern_map(merged_cfg))
+        else:
+            set_maps.append(base_map)
+
+    # Collect all kern pairs: (glyph_name_1, glyph_name_2) → value
+    all_pairs: dict[tuple[str, str], int] = {}
+
+    # Base glyphs (set 0)
+    for (c1, c2), value in base_map.items():
+        all_pairs[(_name(c1), _name(c2))] = value
+
+    # Alternate glyphs: kern the alt glyph name against base second glyph,
+    # AND base first glyph against alt second glyph
+    for set_idx, smap in enumerate(set_maps):
+        if set_idx == 0:
+            continue  # set 0 is the base, already handled
+        suffix = f".alt{set_idx}"
+        for (c1, c2), value in smap.items():
+            alt1 = alt_glyphs.get(c1, [])
+            alt2 = alt_glyphs.get(c2, [])
+            # alt of c1 followed by base c2
+            if set_idx <= len(alt1):
+                alt1_name = f"{_name(c1)}{suffix}"
+                all_pairs[(alt1_name, _name(c2))] = value
+            # base c1 followed by alt of c2
+            if set_idx <= len(alt2):
+                alt2_name = f"{_name(c2)}{suffix}"
+                all_pairs[(_name(c1), alt2_name)] = value
+            # alt c1 followed by alt c2
+            if set_idx <= len(alt1) and set_idx <= len(alt2):
+                all_pairs[(f"{_name(c1)}{suffix}", f"{_name(c2)}{suffix}")] = value
+
+    all_pairs = {k: v for k, v in all_pairs.items() if v != 0}
+    if not all_pairs:
         return []
 
     lines: list[str] = []
@@ -227,8 +312,10 @@ def _kern_lines(kern_cfg: dict) -> list[str]:
                   '(("kern",(("latn",("dflt")),)),))')
     lines.append('font.addLookupSubtable("kern", "kern-1")')
 
-    for (g1, g2), value in sorted(kern_map.items()):
+    for (g1, g2), value in sorted(all_pairs.items()):
         lines.append(f'font["{g1}"].addPosSub("kern-1", "{g2}", {value})')
+
+    return lines
 
     return lines
 
@@ -653,7 +740,8 @@ def _build_multiset_fontforge_script(
         """))
 
     # ── Kerning ──
-    klines = _kern_lines(kern_cfg or {})
+    per_set_kerns = [s.get("kern", {}) for s in sets]
+    klines = _multiset_kern_lines(kern_cfg or {}, per_set_kerns, alt_glyphs)
     if klines:
         lines.append("")
         lines.extend(klines)
@@ -678,13 +766,17 @@ def compile_font_multiset(
     dpi: int = 600,
     font_name: str | None = None,
     kern_cfg: dict | None = None,
+    per_set_kerns: list[dict] | None = None,
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
     output_otf.parent.mkdir(parents=True, exist_ok=True)
 
+    if per_set_kerns is None:
+        per_set_kerns = [{} for _ in extracted_dirs]
+
     sets = []
-    for i, (edir, ovr) in enumerate(zip(extracted_dirs, overrides_list)):
+    for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
         edir = Path(edir)
         metadata = json.loads((edir / "metadata.json").read_text())
         svg_map = vectorize_all(edir, edir / "svgs")
@@ -694,6 +786,7 @@ def compile_font_multiset(
             "svg_map": svg_str_map,
             "metadata": metadata,
             "overrides": ovr,
+            "kern": skern,
         })
 
     script = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg)
