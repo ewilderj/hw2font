@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import tomllib
 from pathlib import Path
@@ -197,26 +198,37 @@ def build(config: str, output: str | None, dpi: int) -> None:
         per_set_kerns.append(s.get("kern", {}))
         borrows_list.append(s.get("borrow", {}))
 
-    # Apply borrows at the extracted-glyph level (copy PNGs between sets)
+    # Apply borrows at the extracted-glyph level (copy PNGs + metadata)
     for i, borrows in enumerate(borrows_list):
+        if not borrows:
+            continue
+        dst_meta_path = extracted_dirs[i] / "metadata.json"
+        dst_meta = json.loads(dst_meta_path.read_text())
+        changed = False
         for glyph, source_idx in borrows.items():
             source_idx = int(source_idx)
             if source_idx < 0 or source_idx >= len(extracted_dirs):
                 continue
             src_dir = extracted_dirs[source_idx] / "glyphs"
             dst_dir = extracted_dirs[i] / "glyphs"
-            # Determine the filename for this glyph
             if len(glyph) == 1:
                 fname = f"U+{ord(glyph):04X}.png"
             else:
                 fname = f"lig_{''.join(glyph)}.png"
             src_file = src_dir / fname
             dst_file = dst_dir / fname
-            if src_file.exists():
-                shutil.copy2(src_file, dst_file)
-                click.echo(f"  Set {i}: borrowed {glyph!r} from set {source_idx}")
-            else:
+            if not src_file.exists():
                 click.echo(f"  ⚠ Set {i}: borrow {glyph!r} from set {source_idx} — not found")
+                continue
+            shutil.copy2(src_file, dst_file)
+            # Also copy the metadata entry so scaling/positioning is correct
+            src_meta = json.loads((extracted_dirs[source_idx] / "metadata.json").read_text())
+            if glyph in src_meta:
+                dst_meta[glyph] = src_meta[glyph]
+                changed = True
+            click.echo(f"  Set {i}: borrowed {glyph!r} from set {source_idx}")
+        if changed:
+            dst_meta_path.write_text(json.dumps(dst_meta, indent=2))
 
     # Generate per-set proof sheets so each set can be reviewed independently
     for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
