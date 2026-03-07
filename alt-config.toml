@@ -43,7 +43,7 @@ right.x = -40
 # pairs.Ta = -150
 
 [[sets]]
-scans = ["extract1.png", "extract2.png"]
+scans = ["images/extract1.png", "images/extract2.png"]
 # Borrow glyphs from another set (value = set index to borrow from)
 #   borrow."-" = 1               # use hyphen from set 1
 borrow."-" = 1
@@ -64,7 +64,7 @@ kern.pairs.ve = -80
 overrides.x.nudge = -15
 
 [[sets]]
-scans = ["alt1.png", "alt2.png"]
+scans = ["images/alt1.png", "images/alt2.png"]
 overrides.a.scale = 0.8
 overrides.i.scale = 0.9
 overrides.z.scale = 0.9
