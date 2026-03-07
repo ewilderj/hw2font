@@ -275,12 +275,14 @@ def _process_cell(
         if stats[i, cv2.CC_STAT_AREA] < min_cc_area:
             binary[labels == i] = 0
         elif i != largest_idx:
-            # Remove components that are far from the main stroke and tiny
-            # relative to it — these are border/noise fragments.
-            # Only filter components BELOW the main body (border remnants).
-            # Components ABOVE are kept (dots on i/j, diacritics).
+            # Remove small components near the cell border (bottom 15% of cell).
+            # These are border/noise fragments after erasure.
+            # Components closer to the main body are kept — they could be dots
+            # on glyphs like ? ! ; i j
             cy = centroids[i][1]
-            if cy > largest_bot + 20 and \
+            cell_h = binary.shape[0]
+            near_border = cy > cell_h * 0.85
+            if near_border and \
                stats[i, cv2.CC_STAT_AREA] < largest_area * 0.15:
                 binary[labels == i] = 0
 
