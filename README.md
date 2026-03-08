@@ -38,7 +38,8 @@ The pipeline is built around five stages:
   - global `space_width`
   - configurable kerning rules
 - Default-on **autotune** with logs and per-set control knobs
-- Webfont export to `.woff2` / `.woff`
+- Autotune vertical nudge for uppercase/digit baseline alignment
+- Webfont export to `.woff2` / `.woff` (auto-generated on build)
 
 ## Example outputs
 
@@ -76,7 +77,7 @@ Python dependencies are managed by `uv` and are declared in [`pyproject.toml`](p
 Clone the repo, then sync dependencies:
 
 ```bash
-git clone <your-repo-url> hw2font
+git clone https://github.com/ewilderj/hw2font.git
 cd hw2font
 uv sync
 ```
@@ -129,6 +130,7 @@ That will:
 - run autotune by default,
 - compile the final `.otf`,
 - generate set-by-set preview proofs,
+- export `.woff2` / `.woff` webfonts and CSS,
 - write autotune logs beside the output font.
 
 ## Typical workflow
@@ -176,7 +178,12 @@ uv run hw2font proof \
 uv run hw2font build sailor-config.toml
 ```
 
-### 6) Export webfonts
+This also generates webfonts in `output/webfonts/`.
+
+### 6) Export webfonts separately
+
+The `build` command auto-generates webfonts. Use the standalone `webfont`
+command to convert any existing OTF/TTF:
 
 ```bash
 uv run hw2font webfont output/EWJ_Handwriting_REF5P.otf \
@@ -424,8 +431,12 @@ Autotune can:
 
 - suggest `scale` changes,
 - suggest `hshift` changes,
+- suggest vertical `nudge` for uppercase/digit glyphs sitting too high or low,
 - add deterministic kerning pair overrides,
 - write JSON and text logs of everything it changed.
+
+Glyphs with descenders (e.g. Q, Y) are automatically excluded from nudge
+correction since their y_offset reflects descender length, not body position.
 
 ### Log files
 
@@ -463,7 +474,19 @@ Available control lists:
 
 - `disable_hshift`
 - `disable_scale`
+- `disable_nudge`
 - `disable_kern_pairs`
+
+You can combine a manual override with a disable to take full control:
+
+```toml
+[[sets]]
+scans = ["images/page1.png", "images/page2.png"]
+overrides.S.nudge = -15
+
+[sets.autotune]
+disable_nudge = ["S"]
+```
 
 These are especially useful when autotune is broadly correct but over-adjusts a specific glyph or pair.
 
@@ -566,6 +589,6 @@ uv run hw2font webfont --help
 - [`re5p-config.toml`](re5p-config.toml) - example config for the REF5P font
 - [`sailor-config.toml`](sailor-config.toml) - example config for the Sailor font
 
-## License / usage
+## License
 
-This repo currently assumes local, personal font generation workflows. Add whatever license and distribution terms you want before publishing more broadly.
+MIT — see [LICENSE](LICENSE).
