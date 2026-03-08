@@ -267,7 +267,8 @@ def _ff_glyph_transform_code(
                 body_xmin = bb[0]
                 body_xmax = bb[2]
             lsb = {DEFAULT_UPM} * 0.04
-            g.left_side_bearing = int(lsb - bb[0] + body_xmin)
+            # Shift glyph so body_xmin lands at the LSB position
+            g.transform(psMat.translate(lsb - body_xmin, 0))
             g.width = int(body_xmax - body_xmin + 2 * lsb)
     """)
 

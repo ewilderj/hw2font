@@ -250,7 +250,7 @@ class TestFfGlyphTransformCode:
         assert 'importOutlines("/tmp/A.svg")' in code
         assert "psMat.scale" in code
         assert "psMat.translate" in code
-        assert "left_side_bearing" in code
+        assert "body_xmin" in code
 
     def test_label_appears_as_comment(self):
         code = _ff_glyph_transform_code(

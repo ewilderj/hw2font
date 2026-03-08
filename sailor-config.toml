@@ -52,19 +52,20 @@ scans = ["images/sailor1.png", "images/sailor2.png"]
 #   overrides.".".nudge = 30
 kern.right.x = -30
 overrides.j.nudge = 20
-kern.left.y = -50
-kern.left.g = -50
+#kern.left.y = -50
+#kern.left.g = -50
 
 [[sets]]
 scans = ["images/sailor-alt1.png", "images/sailor-alt2.png"]
 # Per-glyph overrides for the alternate set:
+
 #   overrides.a.scale = 0.8
 # Per-set kerning (only affects this set's alternate glyphs):
 #   kern.right.x = -60
 #   kern.pairs.xa = -60
 overrides.".".nudge = 20
-kern.left.g = -50
-kern.left.y = -50
+#kern.left.g = -50
+#kern.left.y = -50
 overrides.F.nudge = -20
 overrides.E.nudge = -20
 overrides.j.nudge = 30
