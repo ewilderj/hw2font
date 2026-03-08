@@ -210,6 +210,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
 
     font_name: str | None = cfg.get("name")
     kern_cfg: dict = cfg.get("kern", {})
+    space_width: int | None = cfg.get("space_width")
     if output is None:
         filename = (font_name or "Handwriting").replace(" ", "_") + ".otf"
         output = str(Path("output") / filename)
@@ -248,7 +249,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
         merged_kern = {**kern_cfg, **skern} if skern else kern_cfg
         tmp_otf = output_base / f"set{i}" / "preview.otf"
         click.echo(f"  Set {i}: compiling preview font...")
-        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name, kern_cfg=merged_kern)
+        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name, kern_cfg=merged_kern, space_width=space_width)
         proof_path = Path(f"output/proof_set{i}.png")
         generate_proof(tmp_otf, proof_path)
         tmp_otf.unlink(missing_ok=True)
@@ -258,7 +259,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
     path = compile_font_multiset(
         extracted_dirs, overrides_list, output, dpi,
         font_name=font_name, kern_cfg=kern_cfg, per_set_kerns=per_set_kerns,
-        borrows_list=borrows_list,
+        borrows_list=borrows_list, space_width=space_width,
     )
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 

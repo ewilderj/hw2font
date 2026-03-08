@@ -20,6 +20,10 @@
 
 name = "EWJ Handwriting Sailor"
 
+# Space character width in font units (default: 250 = UPM/4).
+# Smaller values tighten word spacing; try 180–200 for compact handwriting.
+space_width = 200
+
 # Kerning (font units, negative = tighter).
 # Shape-based classes for uppercase → lowercase:
 #   overhang_lc = T, F, V, W, Y  (default: -120)
@@ -52,20 +56,20 @@ scans = ["images/sailor1.png", "images/sailor2.png"]
 #   overrides.".".nudge = 30
 kern.right.x = -30
 overrides.j.nudge = 20
-#kern.left.y = -50
-#kern.left.g = -50
+overrides.":".nudge = -20
+overrides.".".nudge = 10
 
 [[sets]]
 scans = ["images/sailor-alt1.png", "images/sailor-alt2.png"]
 # Per-glyph overrides for the alternate set:
-
 #   overrides.a.scale = 0.8
 # Per-set kerning (only affects this set's alternate glyphs):
 #   kern.right.x = -60
 #   kern.pairs.xa = -60
-overrides.".".nudge = 20
-#kern.left.g = -50
-#kern.left.y = -50
+overrides.".".nudge = 10
+kern.right."." = 20
 overrides.F.nudge = -20
 overrides.E.nudge = -20
 overrides.j.nudge = 30
+overrides.":".nudge = -20
+kern.right.v = -20

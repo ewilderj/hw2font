@@ -423,6 +423,7 @@ def _build_fontforge_script(
     overrides: dict | None = None,
     font_name: str | None = None,
     kern_cfg: dict | None = None,
+    space_width: int | None = None,
 ) -> str:
     """Generate a FontForge Python script as a string.
 
@@ -543,10 +544,11 @@ def _build_fontforge_script(
         lines.append("")
 
     # Set a space glyph
+    _sw = space_width if space_width is not None else DEFAULT_UPM // 4
     lines.append(textwrap.dedent(f"""\
         # Space glyph
         space = font.createChar(0x0020)
-        space.width = {DEFAULT_UPM // 4}
+        space.width = {_sw}
 
         font.generate("{output_otf}")
         print(f"Generated: {output_otf}")
@@ -563,6 +565,7 @@ def _build_multiset_fontforge_script(
     dpi: int,
     font_name: str | None = None,
     kern_cfg: dict | None = None,
+    space_width: int | None = None,
 ) -> tuple[str, dict[str, list[str]]]:
     """Generate a FontForge script that imports multiple glyph sets and
     creates contextual alternates (calt) to cycle between them.
@@ -698,9 +701,10 @@ def _build_multiset_fontforge_script(
         lines.append("")
 
     # ── Space + generate ──
+    _sw = space_width if space_width is not None else DEFAULT_UPM // 4
     lines.append(textwrap.dedent(f"""\
         space = font.createChar(0x0020)
-        space.width = {DEFAULT_UPM // 4}
+        space.width = {_sw}
 
         font.generate("{output_otf}")
         print(f"Generated: {output_otf}")
@@ -799,6 +803,7 @@ def compile_font_multiset(
     kern_cfg: dict | None = None,
     per_set_kerns: list[dict] | None = None,
     borrows_list: list[dict] | None = None,
+    space_width: int | None = None,
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
@@ -836,7 +841,7 @@ def compile_font_multiset(
                 continue
             sets[i]["svg_map"][glyph] = source_svg
 
-    script, alt_glyphs = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg)
+    script, alt_glyphs = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg, space_width=space_width)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", prefix="ff_build_", delete=False,
@@ -873,6 +878,7 @@ def compile_font(
     overrides: dict | None = None,
     font_name: str | None = None,
     kern_cfg: dict | None = None,
+    space_width: int | None = None,
 ) -> Path:
     """Full Module C pipeline: vectorize → assemble → compile .otf."""
     extracted_dir = Path(extracted_dir)
@@ -890,7 +896,7 @@ def compile_font(
     script = _build_fontforge_script(
         svg_str_map, metadata,
         str(output_otf.resolve()), dpi, overrides,
-        font_name=font_name, kern_cfg=kern_cfg,
+        font_name=font_name, kern_cfg=kern_cfg, space_width=space_width,
     )
 
     # Step 3: Run FontForge
