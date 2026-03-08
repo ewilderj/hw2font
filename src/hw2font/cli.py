@@ -393,3 +393,61 @@ def proof(font: str, output: str, open: bool) -> None:
     if open:
         import subprocess
         subprocess.run(["open", str(path)])
+
+
+@main.command()
+@click.argument("font", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "-o",
+    "--output-dir",
+    default=None,
+    type=click.Path(file_okay=False, writable=True),
+    help="Directory for generated webfont assets (default: sibling webfonts/ dir).",
+)
+@click.option(
+    "--family",
+    default=None,
+    help="Override the CSS font-family name.",
+)
+@click.option(
+    "--url-prefix",
+    default=".",
+    show_default=True,
+    help="URL prefix to use inside the emitted CSS.",
+)
+@click.option(
+    "--with-woff/--woff2-only",
+    default=False,
+    help="Also emit a .woff fallback alongside .woff2.",
+)
+@click.option(
+    "--css",
+    "css_path",
+    default=None,
+    type=click.Path(dir_okay=False, writable=True),
+    help="Path for the emitted CSS snippet (default: beside the webfont files).",
+)
+def webfont(
+    font: str,
+    output_dir: str | None,
+    family: str | None,
+    url_prefix: str,
+    with_woff: bool,
+    css_path: str | None,
+) -> None:
+    """Convert an OTF/TTF font into WOFF2 webfont assets and CSS."""
+    from hw2font.webfont import generate_webfont
+
+    result = generate_webfont(
+        font,
+        output_dir=output_dir,
+        family_name=family,
+        url_prefix=url_prefix,
+        emit_woff=with_woff,
+        css_path=css_path,
+    )
+    for path in result["files"]:
+        click.echo(f"✓ Webfont → {path}")
+    click.echo(f"✓ CSS → {result['css_path']}")
+    click.echo("")
+    click.echo(result["css"])
