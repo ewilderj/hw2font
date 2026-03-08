@@ -224,11 +224,16 @@ def _ff_glyph_transform_code(
     desired_h: float,
     yoff_frac: float,
     total_nudge_fu: float,
+    hshift_fu: float = 0.0,
 ) -> str:
     """Generate FontForge Python code to import, scale, and position a glyph.
 
     This is the shared template used by both single-set and multi-set
     script generators.
+
+    Side bearings and advance width are computed from the glyph body
+    *above the baseline* (y >= 0) so that descenders tuck naturally
+    under the preceding character instead of inflating the width.
     """
     return textwrap.dedent(f"""\
         # ── {label} ──
@@ -242,12 +247,28 @@ def _ff_glyph_transform_code(
             bb = g.boundingBox()
             descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
             shift_y = -descent_units - bb[1] + {total_nudge_fu:.2f}
-            g.transform(psMat.translate(0, shift_y))
+            g.transform(psMat.translate({hshift_fu:.2f}, shift_y))
             bb = g.boundingBox()
+            # Compute side bearings from body above baseline (y >= 0).
+            # Descenders that extend left/right of the body should not
+            # inflate the advance width — they tuck under adjacent glyphs.
+            layer = g.foreground
+            body_xmin = bb[2]  # start at rightmost, narrow down
+            body_xmax = bb[0]
+            for contour in layer:
+                for point in contour:
+                    if point.y >= 0:
+                        if point.x < body_xmin:
+                            body_xmin = point.x
+                        if point.x > body_xmax:
+                            body_xmax = point.x
+            # Fall back to full bbox if no points above baseline
+            if body_xmin >= body_xmax:
+                body_xmin = bb[0]
+                body_xmax = bb[2]
             lsb = {DEFAULT_UPM} * 0.04
-            g.left_side_bearing = int(lsb)
-            g.right_side_bearing = int(lsb)
-            g.width = int(bb[2] - bb[0] + 2 * lsb)
+            g.left_side_bearing = int(lsb - bb[0] + body_xmin)
+            g.width = int(body_xmax - body_xmin + 2 * lsb)
     """)
 
 
@@ -476,9 +497,11 @@ def _build_fontforge_script(
         ovr = overrides.get(glyph, {})
         scale_mult = ovr.get("scale", 1.0)
         extra_nudge_px = ovr.get("nudge", 0.0)
+        hshift_px = ovr.get("hshift", 0.0)
         desired_h = e["bbox_h"] * _px_to_fu * scale_mult
         yoff_frac = e["y_offset"] / e["bbox_h"] if e["bbox_h"] > 0 else 0
         total_nudge_fu = (e["nudge_px"] + extra_nudge_px) * _px_to_fu
+        hshift_fu = hshift_px * _px_to_fu
 
         lines.append(_ff_glyph_transform_code(
             slot_code=e["slot_code"],
@@ -487,6 +510,7 @@ def _build_fontforge_script(
             desired_h=desired_h,
             yoff_frac=yoff_frac,
             total_nudge_fu=total_nudge_fu,
+            hshift_fu=hshift_fu,
         ))
 
     # Build OpenType feature lookups for ligatures
@@ -607,10 +631,12 @@ def _build_multiset_fontforge_script(
             ovr = overrides.get(glyph, {})
             scale_mult = ovr.get("scale", 1.0)
             extra_nudge_px = ovr.get("nudge", 0.0)
+            hshift_px = ovr.get("hshift", 0.0)
 
             desired_h = bbox_h * _px_to_fu * scale_mult
             yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
             total_nudge_fu = (nudge_px + extra_nudge_px) * _px_to_fu
+            hshift_fu = hshift_px * _px_to_fu
 
             if set_idx == 0:
                 if len(glyph) == 1:
@@ -636,6 +662,7 @@ def _build_multiset_fontforge_script(
                 desired_h=desired_h,
                 yoff_frac=yoff_frac,
                 total_nudge_fu=total_nudge_fu,
+                hshift_fu=hshift_fu,
             ))
 
     # ── Ligature lookups (base set only) ──

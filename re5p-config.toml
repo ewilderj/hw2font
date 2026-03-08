@@ -5,6 +5,7 @@
 # Per-glyph overrides (under each set):
 #   scale  — multiplier on the glyph's size (e.g. 0.8 = 80%)
 #   nudge  — vertical shift in pixels (positive = up, negative = down)
+#   hshift — horizontal shift in pixels (negative = left, positive = right)
 #
 # Override keys:
 #   Letters:    overrides.a.scale = 0.9
@@ -17,7 +18,7 @@
 #   Special:    overrides."♥".scale = 0.9        # Unicode chars in quotes
 #               overrides."☺".nudge = -3
 
-name = "EWJ Handwriting REF5P "
+name = "EWJ Handwriting REF5P"
 
 # Kerning (font units, negative = tighter).
 # Shape-based classes for uppercase → lowercase:
