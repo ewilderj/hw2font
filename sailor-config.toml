@@ -71,7 +71,10 @@ kern.right.x = -30
 overrides.j.nudge = 20
 overrides.":".nudge = -20
 overrides.".".nudge = 10
-
+overrides.S.nudge = -20          # move S down toward baseline
+[sets.autotune]
+disable_nudge = ["S"]            # prevent autotune from overwriting it
+   
 [[sets]]
 scans = ["images/sailor-alt1.png", "images/sailor-alt2.png"]
 # Per-glyph overrides for the alternate set:

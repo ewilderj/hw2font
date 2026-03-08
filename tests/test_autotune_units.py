@@ -12,6 +12,7 @@ from hw2font.autotune.engine import (
     GlyphMetrics,
     _effective_pair_gap_px,
     _suggest_geometry_for_set,
+    _suggest_nudge_for_set,
     autotune_build,
 )
 
@@ -156,3 +157,56 @@ def test_autotune_build_writes_logs_and_returns_tuned_config(tmp_path: Path):
     assert payload["config"]["sets"][0]["autotune"] == {"disable_hshift": ["A"]}
     assert payload["config"]["kern"] == tuned_kern
     assert payload["config"]["sets"][0]["kern"] == tuned_per_set[0]
+
+
+def test_suggest_nudge_adjusts_uc_outlier():
+    """Uppercase letters with y_offset far from class median get a nudge suggestion."""
+    metrics_map = {
+        "A": GlyphMetrics("A", "uc", 60, 100, -2.0, 30.0, 0, 59, 2.0, 2.0),
+        "B": GlyphMetrics("B", "uc", 60, 95, -3.0, 30.0, 0, 59, 2.0, 2.0),
+        "C": GlyphMetrics("C", "uc", 60, 90, -1.0, 30.0, 0, 59, 2.0, 2.0),
+        # S sits 28px higher than the median (-30 vs ~ -2)
+        "S": GlyphMetrics("S", "uc", 60, 91, -30.0, 30.0, 0, 59, 2.0, 2.0),
+        # Q has a descender (positive y_offset) — should be skipped
+        "Q": GlyphMetrics("Q", "uc", 60, 126, 19.7, 30.0, 0, 59, 2.0, 2.0),
+    }
+    overrides: dict[str, dict] = {}
+    changes: list[dict] = []
+    changed = _suggest_nudge_for_set(
+        metrics_map=metrics_map,
+        overrides=overrides,
+        controls={},
+        iteration=1,
+        change_log=changes,
+    )
+    assert changed
+    assert "S" in overrides
+    # S needs a negative nudge to move it down toward the class median
+    assert overrides["S"]["nudge"] < 0
+    assert any(c["glyph"] == "S" and c["type"] == "nudge" for c in changes)
+    # A, B, C should not be nudged (they're near the median)
+    for letter in ("A", "B", "C"):
+        assert not overrides.get(letter, {}).get("nudge")
+    # Q should not be nudged (descender glyph, positive y_offset)
+    assert not overrides.get("Q", {}).get("nudge")
+    assert not any(c["glyph"] == "Q" for c in changes)
+
+
+def test_suggest_nudge_respects_disable_nudge():
+    """Glyphs listed in disable_nudge are not adjusted."""
+    metrics_map = {
+        "A": GlyphMetrics("A", "uc", 60, 100, -2.0, 30.0, 0, 59, 2.0, 2.0),
+        "B": GlyphMetrics("B", "uc", 60, 95, -3.0, 30.0, 0, 59, 2.0, 2.0),
+        "S": GlyphMetrics("S", "uc", 60, 91, -30.0, 30.0, 0, 59, 2.0, 2.0),
+    }
+    overrides: dict[str, dict] = {}
+    changes: list[dict] = []
+    changed = _suggest_nudge_for_set(
+        metrics_map=metrics_map,
+        overrides=overrides,
+        controls={"disable_nudge": ["S"]},
+        iteration=1,
+        change_log=changes,
+    )
+    assert not changed
+    assert not overrides.get("S", {}).get("nudge")

@@ -31,6 +31,15 @@ _MAX_HSHIFT_STEP = 2.0
 _MAX_HSHIFT_ABS = 15.0
 _SCALE_TOLERANCE = 0.15
 _HSHIFT_TOLERANCE = 2.0
+# Vertical nudge — only for classes NOT already handled by compiler baseline nudge
+# (compiler auto-nudges lc_nondesc and lc_desc; we handle uc/digit)
+_NUDGE_AUTOTUNE_CLASSES = frozenset({"uc", "digit"})
+_NUDGE_TOLERANCE = 5.0      # px — only suggest nudge if deviation exceeds this
+_MAX_NUDGE_STEP = 15.0       # max px adjustment per iteration
+_MAX_NUDGE_ABS = 40.0        # max total nudge px
+# Glyphs with y_offset above this are descenders whose y_offset reflects
+# the descender extension, not body position — skip them from nudge.
+_NUDGE_DESCENDER_SKIP = 3.0  # px
 _KERN_TOLERANCE_PX = 3.0
 _KERN_QUANTUM_FU = 5
 _MAX_KERN_ABS = 220
@@ -324,6 +333,91 @@ def _suggest_geometry_for_set(
     return changed
 
 
+def _suggest_nudge_for_set(
+    *,
+    metrics_map: dict[str, GlyphMetrics],
+    overrides: dict,
+    controls: dict | None,
+    iteration: int,
+    change_log: list[dict],
+) -> bool:
+    """Suggest vertical nudge adjustments for non-lowercase glyphs.
+
+    The compiler's baseline nudge only corrects lowercase groups.
+    This fills the gap for uppercase and digits by computing the median
+    y_offset per glyph class and nudging outliers.  Glyphs with positive
+    y_offset (descender ink below baseline) are skipped — their y_offset
+    reflects descender length, not body position.
+    """
+    changed = False
+    disable_nudge = _control_set(controls, "disable_nudge")
+
+    grouped_yoffsets: dict[str, list[float]] = {}
+    for glyph, metrics in metrics_map.items():
+        if metrics.glyph_class not in _NUDGE_AUTOTUNE_CLASSES:
+            continue
+        if metrics.y_offset > _NUDGE_DESCENDER_SKIP:
+            continue
+        grouped_yoffsets.setdefault(metrics.glyph_class, []).append(metrics.y_offset)
+
+    target_yoffsets = {
+        cls: statistics.median(values)
+        for cls, values in grouped_yoffsets.items()
+        if values
+    }
+
+    for glyph in sorted(metrics_map):
+        metrics = metrics_map[glyph]
+        if metrics.glyph_class not in _NUDGE_AUTOTUNE_CLASSES:
+            continue
+        if glyph in disable_nudge:
+            continue
+        if metrics.y_offset > _NUDGE_DESCENDER_SKIP:
+            continue
+
+        target = target_yoffsets.get(metrics.glyph_class)
+        if target is None:
+            continue
+
+        ovr = overrides.setdefault(glyph, {})
+        current_nudge = float(ovr.get("nudge", 0.0))
+
+        # Desired nudge to align this glyph with the class median.
+        # For uppercase (compiler sets nudge_px=0), config nudge IS the full adjustment.
+        desired_nudge = -(target - metrics.y_offset)
+
+        if abs(desired_nudge - current_nudge) < _NUDGE_TOLERANCE:
+            continue
+
+        step = _clamp(
+            desired_nudge - current_nudge,
+            -_MAX_NUDGE_STEP,
+            _MAX_NUDGE_STEP,
+        )
+        new_nudge = current_nudge + step
+        new_nudge = _clamp(new_nudge, -_MAX_NUDGE_ABS, _MAX_NUDGE_ABS)
+        new_nudge = _round_float(new_nudge, 1)
+
+        if abs(new_nudge - current_nudge) < _NUDGE_TOLERANCE:
+            continue
+
+        ovr["nudge"] = new_nudge
+        change_log.append({
+            "iteration": iteration,
+            "type": "nudge",
+            "glyph": glyph,
+            "old": current_nudge,
+            "new": new_nudge,
+            "reason": (
+                f"{metrics.glyph_class} y_offset {metrics.y_offset:.1f}px "
+                f"vs class median {target:.1f}px"
+            ),
+        })
+        changed = True
+
+    return changed
+
+
 def _suggest_kerning_for_set(
     *,
     set_idx: int,
@@ -481,6 +575,13 @@ def autotune_build(
         changed = False
         for set_idx, (_, metrics_map) in enumerate(set_payloads):
             changed |= _suggest_geometry_for_set(
+                metrics_map=metrics_map,
+                overrides=tuned_overrides[set_idx],
+                controls=controls_list[set_idx],
+                iteration=iteration,
+                change_log=all_changes,
+            )
+            changed |= _suggest_nudge_for_set(
                 metrics_map=metrics_map,
                 overrides=tuned_overrides[set_idx],
                 controls=controls_list[set_idx],

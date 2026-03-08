@@ -47,7 +47,7 @@ def _load_compile_config(config_path: str | None) -> dict:
 def _merge_autotune_controls(base: dict | None, override: dict | None) -> dict:
     """Merge top-level and set-level autotune controls."""
     merged: dict = {}
-    for key in ("disable_scale", "disable_hshift", "disable_kern_pairs"):
+    for key in ("disable_scale", "disable_hshift", "disable_kern_pairs", "disable_nudge"):
         values: list[str] = []
         for source in (base or {}, override or {}):
             for item in source.get(key, []):
@@ -205,6 +205,19 @@ def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) 
         tightness=cfg.get("tightness", 1.0),
     )
     click.echo(f"✓ Font compiled → {path}")
+
+    from hw2font.webfont import generate_webfont
+
+    webfont_dir = Path(path).parent / "webfonts"
+    css_path_out = webfont_dir / f"{Path(path).stem}.css"
+    result = generate_webfont(
+        font_path=path,
+        output_dir=str(webfont_dir),
+        emit_woff=True,
+        css_path=str(css_path_out),
+    )
+    for asset_path in result["files"]:
+        click.echo(f"  ✓ Webfont → {asset_path}")
 
 
 @main.command()
@@ -364,6 +377,20 @@ def build(
         borrows_list=borrows_list, space_width=space_width, tightness=tightness,
     )
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
+
+    # Generate webfonts alongside the OTF
+    from hw2font.webfont import generate_webfont
+
+    webfont_dir = Path(path).parent / "webfonts"
+    css_path = webfont_dir / f"{Path(path).stem}.css"
+    result = generate_webfont(
+        font_path=path,
+        output_dir=str(webfont_dir),
+        emit_woff=True,
+        css_path=str(css_path),
+    )
+    for asset_path in result["files"]:
+        click.echo(f"  ✓ Webfont → {asset_path}")
 
 
 @main.command()

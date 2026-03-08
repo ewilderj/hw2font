@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "Convert scanned handwriting templates into OpenType fonts"
 readme = "README.md"
 authors = [
-    { name = "Edd Wilder-James", email = "edd@me.com" }
+    { name = "Edd Wilder-James" }
 ]
 requires-python = ">=3.14"
+license = "MIT"
 dependencies = [
     "brotli>=1.2.0",
     "click>=8.3.1",
