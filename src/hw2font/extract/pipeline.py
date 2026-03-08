@@ -296,6 +296,11 @@ def _process_cell(
             # labels / headers from the next grid row, not handwriting.
             if comp_top >= box_bottom_y:
                 binary[labels == i] = 0
+            # Border remnants: small components near box_bottom_y that
+            # survived row-based erasure (edge fragments of the printed
+            # border line).
+            elif comp_top >= box_bottom_y - border_band:
+                binary[labels == i] = 0
             # Remove small components near the cell border (bottom 15%).
             # These are border/noise fragments after erasure.
             # Components closer to the main body are kept — they could be
