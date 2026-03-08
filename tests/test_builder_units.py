@@ -250,7 +250,7 @@ class TestFfGlyphTransformCode:
         assert 'importOutlines("/tmp/A.svg")' in code
         assert "psMat.scale" in code
         assert "psMat.translate" in code
-        assert "body_xmin" in code
+        assert "if False:" in code
 
     def test_label_appears_as_comment(self):
         code = _ff_glyph_transform_code(
@@ -275,3 +275,43 @@ class TestFfGlyphTransformCode:
         assert "500.00" in code
         assert "0.3000" in code
         assert "10.50" in code
+
+    def test_hshift_applied_after_body_alignment(self):
+        code = _ff_glyph_transform_code(
+            slot_code='font.createChar(0x0079, "uni0079")',
+            svg_path="/tmp/y.svg",
+            label="y",
+            desired_h=500.0,
+            yoff_frac=0.2,
+            total_nudge_fu=0.0,
+            hshift_fu=12.5,
+            use_body_width=True,
+        )
+        assert "g.transform(psMat.translate(0, shift_y))" in code
+        assert "g.transform(psMat.translate(lsb + 12.50 - body_xmin, 0))" in code
+        assert "if True:" in code
+
+    def test_tightness_scales_side_bearing(self):
+        code = _ff_glyph_transform_code(
+            slot_code='font.createChar(0x006E, "uni006E")',
+            svg_path="/tmp/n.svg",
+            label="n",
+            desired_h=500.0,
+            yoff_frac=0.0,
+            total_nudge_fu=0.0,
+            tightness=1.15,
+        )
+        assert "lsb = 1000 * 0.04 / 1.1500" in code
+
+    def test_non_descenders_use_full_bbox_width(self):
+        code = _ff_glyph_transform_code(
+            slot_code='font.createChar(0x004C, "uni004C")',
+            svg_path="/tmp/L.svg",
+            label="L",
+            desired_h=500.0,
+            yoff_frac=0.0,
+            total_nudge_fu=0.0,
+            use_body_width=False,
+        )
+        assert "g.transform(psMat.translate(lsb + 0.00 - bb[0], 0))" in code
+        assert "g.width = int((bb[2] - bb[0]) + 2 * lsb)" in code

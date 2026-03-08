@@ -6,6 +6,11 @@
 #   scale  — multiplier on the glyph's size (e.g. 0.8 = 80%)
 #   nudge  — vertical shift in pixels (positive = up, negative = down)
 #   hshift — horizontal shift in pixels (negative = left, positive = right)
+# Per-set autotune controls:
+#   [sets.autotune]
+#   disable_hshift = ["L"]       # don't let autotune move these glyphs sideways
+#   disable_scale = ["Q"]        # don't let autotune resize these glyphs
+#   disable_kern_pairs = ["Ta"]  # don't let autotune change these pair kerns
 #
 # Override keys:
 #   Letters:    overrides.a.scale = 0.9
@@ -19,6 +24,10 @@
 #               overrides."☺".nudge = -3
 
 name = "EWJ Handwriting Sailor"
+
+# Tightness multiplier for letter spacing via side bearings.
+# 1.0 = default; higher values make the font feel more condensed.
+tightness = 1.35
 
 # Space character width in font units (default: 250 = UPM/4).
 # Smaller values tighten word spacing; try 180–200 for compact handwriting.
@@ -44,8 +53,12 @@ round_lc = -60
 straight_lc = -40
 open_lc = -50
 right.x = -40
+right.n = -30
+right.m = -20
 # left.o = -20
 # pairs.Ta = -150
+# pairs.nt = -50
+#pairs.te = 20
 
 [[sets]]
 scans = ["images/sailor1.png", "images/sailor2.png"]

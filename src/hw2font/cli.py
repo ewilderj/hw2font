@@ -26,6 +26,39 @@ def _load_overrides(config_path: str | None) -> dict:
     return data.get("overrides", {})
 
 
+def _load_compile_config(config_path: str | None) -> dict:
+    """Load single-set compile options from a TOML config file."""
+    if not config_path:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    data = tomllib.loads(path.read_text())
+    return {
+        "overrides": data.get("overrides", {}),
+        "font_name": data.get("name"),
+        "kern_cfg": data.get("kern", {}),
+        "space_width": data.get("space_width"),
+        "tightness": data.get("tightness", 1.0),
+        "autotune": data.get("autotune", {}),
+    }
+
+
+def _merge_autotune_controls(base: dict | None, override: dict | None) -> dict:
+    """Merge top-level and set-level autotune controls."""
+    merged: dict = {}
+    for key in ("disable_scale", "disable_hshift", "disable_kern_pairs"):
+        values: list[str] = []
+        for source in (base or {}, override or {}):
+            for item in source.get(key, []):
+                item = str(item)
+                if item not in values:
+                    values.append(item)
+        if values:
+            merged[key] = values
+    return merged
+
+
 def _apply_borrows(
     borrows_list: list[dict],
     extracted_dirs: list[Path],
@@ -157,10 +190,20 @@ def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) 
     """Vectorize extracted glyphs and compile into an OpenType font."""
     from hw2font.compile.builder import compile_font
 
-    overrides = _load_overrides(config_path)
+    cfg = _load_compile_config(config_path)
+    overrides = cfg.get("overrides", {})
     if overrides:
         click.echo(f"  Loaded {len(overrides)} glyph override(s) from {config_path}")
-    path = compile_font(extracted_dir, output, dpi, overrides)
+    path = compile_font(
+        extracted_dir,
+        output,
+        dpi,
+        overrides,
+        font_name=cfg.get("font_name"),
+        kern_cfg=cfg.get("kern_cfg"),
+        space_width=cfg.get("space_width"),
+        tightness=cfg.get("tightness", 1.0),
+    )
     click.echo(f"✓ Font compiled → {path}")
 
 
@@ -180,7 +223,32 @@ def compile(extracted_dir: str, output: str, dpi: int, config_path: str | None) 
     type=int,
     help="DPI of the scanned images.",
 )
-def build(config: str, output: str | None, dpi: int) -> None:
+@click.option(
+    "--no-autotune",
+    is_flag=True,
+    help="Disable the autotune pass before preview/final font compilation.",
+)
+@click.option(
+    "--autotune-log",
+    default=None,
+    type=click.Path(dir_okay=False, writable=True),
+    help="Path for the autotune JSON log (default: beside the output font).",
+)
+@click.option(
+    "--autotune-max-iterations",
+    default=2,
+    show_default=True,
+    type=click.IntRange(1, 10),
+    help="Maximum number of autotune refinement iterations.",
+)
+def build(
+    config: str,
+    output: str | None,
+    dpi: int,
+    no_autotune: bool,
+    autotune_log: str | None,
+    autotune_max_iterations: int,
+) -> None:
     """Extract + compile all scan sets from a config file into one font.
 
     The config file lists multiple scan sets, each with their own scans
@@ -200,6 +268,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
         overrides.i = {scale = 0.9, nudge = 10}
     """
     from hw2font.extract.pipeline import extract_glyphs
+    from hw2font.autotune import autotune_build
     from hw2font.compile.builder import compile_font, compile_font_multiset
     from hw2font.proof.sheet import generate_proof
 
@@ -211,6 +280,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
     font_name: str | None = cfg.get("name")
     kern_cfg: dict = cfg.get("kern", {})
     space_width: int | None = cfg.get("space_width")
+    tightness: float = float(cfg.get("tightness", 1.0))
     if output is None:
         filename = (font_name or "Handwriting").replace(" ", "_") + ".otf"
         output = str(Path("output") / filename)
@@ -218,12 +288,15 @@ def build(config: str, output: str | None, dpi: int) -> None:
     click.echo(f"Building font from {len(sets)} scan set(s)...")
     if font_name:
         click.echo(f"  Font name: {font_name}")
+    autotune = not no_autotune
 
     extracted_dirs: list[Path] = []
     overrides_list: list[dict] = []
     per_set_kerns: list[dict] = []
     borrows_list: list[dict] = []
+    autotune_controls: list[dict] = []
     output_base = Path("output/extracted")
+    autotune_cfg: dict = cfg.get("autotune", {})
 
     for i, s in enumerate(sets):
         scans = s.get("scans", [])
@@ -239,9 +312,34 @@ def build(config: str, output: str | None, dpi: int) -> None:
         overrides_list.append(s.get("overrides", {}))
         per_set_kerns.append(s.get("kern", {}))
         borrows_list.append(s.get("borrow", {}))
+        autotune_controls.append(_merge_autotune_controls(autotune_cfg, s.get("autotune", {})))
 
     # Apply borrows at the extracted-glyph level (copy PNGs + metadata)
     _apply_borrows(borrows_list, extracted_dirs)
+
+    if autotune:
+        autotune_path = autotune_log
+        if autotune_path is None:
+            assert output is not None
+            autotune_path = str(Path(output).with_name(Path(output).stem + "_autotune.json"))
+        click.echo(f"  Autotune: analyzing {len(extracted_dirs)} set(s)...")
+        overrides_list, kern_cfg, per_set_kerns, artifacts = autotune_build(
+            extracted_dirs=extracted_dirs,
+            overrides_list=overrides_list,
+            kern_cfg=kern_cfg,
+            per_set_kerns=per_set_kerns,
+            controls_list=autotune_controls,
+            log_path=autotune_path,
+            max_iterations=autotune_max_iterations,
+            tightness=tightness,
+        )
+        click.echo(
+            "    "
+            f"✓ Autotune applied {artifacts['change_count']} change(s) in "
+            f"{artifacts['iterations_run']} iteration(s)"
+        )
+        click.echo(f"    ✓ Log → {artifacts['json_log']}")
+        click.echo(f"    ✓ Text log → {artifacts['text_log']}")
 
     # Generate per-set proof sheets so each set can be reviewed independently
     for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
@@ -249,7 +347,11 @@ def build(config: str, output: str | None, dpi: int) -> None:
         merged_kern = {**kern_cfg, **skern} if skern else kern_cfg
         tmp_otf = output_base / f"set{i}" / "preview.otf"
         click.echo(f"  Set {i}: compiling preview font...")
-        compile_font(edir, tmp_otf, dpi, overrides=ovr, font_name=font_name, kern_cfg=merged_kern, space_width=space_width)
+        compile_font(
+            edir, tmp_otf, dpi,
+            overrides=ovr, font_name=font_name, kern_cfg=merged_kern,
+            space_width=space_width, tightness=tightness,
+        )
         proof_path = Path(f"output/proof_set{i}.png")
         generate_proof(tmp_otf, proof_path)
         tmp_otf.unlink(missing_ok=True)
@@ -259,7 +361,7 @@ def build(config: str, output: str | None, dpi: int) -> None:
     path = compile_font_multiset(
         extracted_dirs, overrides_list, output, dpi,
         font_name=font_name, kern_cfg=kern_cfg, per_set_kerns=per_set_kerns,
-        borrows_list=borrows_list, space_width=space_width,
+        borrows_list=borrows_list, space_width=space_width, tightness=tightness,
     )
     click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
 

@@ -53,10 +53,31 @@ The agent must implement this as a modular pipeline. An all-Python architecture 
   * Automatically snap the Y-offset of anomalous standard characters to the median baseline if they fall within the tolerance threshold.
   * Generate a visual HTML or PDF proof sheet showing the generated font aligned on a ruled grid to verify baseline consistency before final OTF export.
 
+### Module E: Autotune (Optional build-time optimization pass)
+* **Requirement:** An optional build mode that iteratively improves glyph extraction geometry and spacing without changing the existing proof-sheet design.
+* **Features:**
+  * Run as an explicit build option (for example, `build --autotune`) so the pipeline remains reproducible both with and without autotuning.
+  * Analyze extracted glyph bitmaps, vector outlines, and rendered specimen text to detect visual incongruence such as:
+    * inconsistent left/right side bearings,
+    * over-tight or over-wide glyph crops,
+    * accidental inclusion of box borders or nearby printed labels,
+    * mismatched x-height or cap-height alignment,
+    * descenders or ascenders that visually collide despite nominal kerning values.
+  * Generate additional internal tuning specimens that exercise common failure modes more aggressively than the normal proof sheets do (e.g., repeated doubles, mixed descender/ascender pairs, punctuation combinations, and spacing stress tests). These specimens are for autotune analysis only and must not change the user-facing proof workflow.
+  * Iteratively adjust per-glyph extraction boxes and/or derived placement metadata, re-render tuning specimens, and stop when the score converges or a configured iteration limit is reached.
+  * Propose or emit kerning configuration overrides alongside glyph-box adjustments so the final output is both visually improved and reproducible from configuration, not from one-off manual edits.
+  * Emit a machine-readable and human-readable autotune log describing every change, including the glyph or pair affected, the old and new values, the reason for the adjustment, and the iteration in which it occurred.
+  * Support a dry-run mode that reports suggested changes without applying them.
+* **Constraints:**
+  * Autotune must preserve deterministic builds: given the same inputs and config, it should produce the same tuned output and the same emitted settings.
+  * Autotune output should be representable as config values that can be checked into source control (for example, glyph box overrides, nudges, hshifts, and kerning pairs).
+  * The normal proof command and proof layout should remain unchanged; autotune may create separate analysis artifacts as needed.
+
 ## 5. Success Criteria
 * The agent successfully generates a print-ready PDF template with baseline guides.
 * The OpenCV pipeline correctly calculates and passes Y-offset metadata to FontForge within the Python environment.
 * The processing pipeline runs end-to-end via a single Python CLI command without manual intervention.
+* The build can be run with or without autotune, and autotune emits a clear log of the adjustments it applied.
 * The output `.otf` file installs cleanly on a local operating system.
 * Typing double letters (e.g., "oo") automatically triggers the OpenType substitution rule.
 * Letters with descenders visually drop below the baseline when typed.

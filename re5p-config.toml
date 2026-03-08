@@ -6,6 +6,11 @@
 #   scale  — multiplier on the glyph's size (e.g. 0.8 = 80%)
 #   nudge  — vertical shift in pixels (positive = up, negative = down)
 #   hshift — horizontal shift in pixels (negative = left, positive = right)
+# Per-set autotune controls:
+#   [sets.autotune]
+#   disable_hshift = ["L"]       # don't let autotune move these glyphs sideways
+#   disable_scale = ["Q"]        # don't let autotune resize these glyphs
+#   disable_kern_pairs = ["Ta"]  # don't let autotune change these pair kerns
 #
 # Override keys:
 #   Letters:    overrides.a.scale = 0.9
@@ -19,6 +24,11 @@
 #               overrides."☺".nudge = -3
 
 name = "EWJ Handwriting REF5P"
+
+# Tightness multiplier for letter spacing via side bearings.
+# 1.0 = default; higher values make the font feel more condensed.
+tightness = 1.0
+
 space_width = 300
 
 # Kerning (font units, negative = tighter).
@@ -64,6 +74,10 @@ overrides.",".nudge = 40
 kern.right.v = -60
 kern.pairs.ve = -80
 overrides.x.nudge = -15
+
+[sets.autotune]
+# Keep set 0 uppercase L from being pushed right by centroid-based autotune.
+disable_hshift = ["L"]
 
 [[sets]]
 scans = ["images/alt1.png", "images/alt2.png"]

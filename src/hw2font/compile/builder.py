@@ -225,15 +225,17 @@ def _ff_glyph_transform_code(
     yoff_frac: float,
     total_nudge_fu: float,
     hshift_fu: float = 0.0,
+    tightness: float = 1.0,
+    use_body_width: bool = False,
 ) -> str:
     """Generate FontForge Python code to import, scale, and position a glyph.
 
     This is the shared template used by both single-set and multi-set
     script generators.
 
-    Side bearings and advance width are computed from the glyph body
-    *above the baseline* (y >= 0) so that descenders tuck naturally
-    under the preceding character instead of inflating the width.
+    For descenders, side bearings and advance width can be computed from
+    the glyph body *above the baseline* (y >= 0) so that the descender
+    tucks under the preceding character instead of inflating the width.
     """
     return textwrap.dedent(f"""\
         # ── {label} ──
@@ -247,29 +249,34 @@ def _ff_glyph_transform_code(
             bb = g.boundingBox()
             descent_units = (bb[3] - bb[1]) * {yoff_frac:.4f}
             shift_y = -descent_units - bb[1] + {total_nudge_fu:.2f}
-            g.transform(psMat.translate({hshift_fu:.2f}, shift_y))
+            g.transform(psMat.translate(0, shift_y))
             bb = g.boundingBox()
-            # Compute side bearings from body above baseline (y >= 0).
-            # Descenders that extend left/right of the body should not
-            # inflate the advance width — they tuck under adjacent glyphs.
-            layer = g.foreground
-            body_xmin = bb[2]  # start at rightmost, narrow down
-            body_xmax = bb[0]
-            for contour in layer:
-                for point in contour:
-                    if point.y >= 0:
-                        if point.x < body_xmin:
-                            body_xmin = point.x
-                        if point.x > body_xmax:
-                            body_xmax = point.x
-            # Fall back to full bbox if no points above baseline
-            if body_xmin >= body_xmax:
-                body_xmin = bb[0]
-                body_xmax = bb[2]
-            lsb = {DEFAULT_UPM} * 0.04
-            # Shift glyph so body_xmin lands at the LSB position
-            g.transform(psMat.translate(lsb - body_xmin, 0))
-            g.width = int(body_xmax - body_xmin + 2 * lsb)
+            lsb = {DEFAULT_UPM} * 0.04 / {tightness:.4f}
+            if {str(use_body_width)}:
+                # Compute side bearings from body above baseline (y >= 0).
+                # Descenders that extend left/right of the body should not
+                # inflate the advance width — they tuck under adjacent glyphs.
+                layer = g.foreground
+                body_xmin = bb[2]  # start at rightmost, narrow down
+                body_xmax = bb[0]
+                for contour in layer:
+                    for point in contour:
+                        if point.y >= 0:
+                            if point.x < body_xmin:
+                                body_xmin = point.x
+                            if point.x > body_xmax:
+                                body_xmax = point.x
+                # Fall back to full bbox if no points above baseline
+                if body_xmin >= body_xmax:
+                    body_xmin = bb[0]
+                    body_xmax = bb[2]
+                # Shift glyph so body_xmin lands at the LSB position, then
+                # apply any explicit horizontal adjustment from config/autotune.
+                g.transform(psMat.translate(lsb + {hshift_fu:.2f} - body_xmin, 0))
+                g.width = int(body_xmax - body_xmin + 2 * lsb)
+            else:
+                g.transform(psMat.translate(lsb + {hshift_fu:.2f} - bb[0], 0))
+                g.width = int((bb[2] - bb[0]) + 2 * lsb)
     """)
 
 
@@ -424,6 +431,7 @@ def _build_fontforge_script(
     font_name: str | None = None,
     kern_cfg: dict | None = None,
     space_width: int | None = None,
+    tightness: float = 1.0,
 ) -> str:
     """Generate a FontForge Python script as a string.
 
@@ -504,6 +512,7 @@ def _build_fontforge_script(
         yoff_frac = e["y_offset"] / e["bbox_h"] if e["bbox_h"] > 0 else 0
         total_nudge_fu = (e["nudge_px"] + extra_nudge_px) * _px_to_fu
         hshift_fu = hshift_px * _px_to_fu
+        gclass = _glyph_class(glyph, y_offset=e["y_offset"], bbox_h=e["bbox_h"])
 
         lines.append(_ff_glyph_transform_code(
             slot_code=e["slot_code"],
@@ -513,6 +522,8 @@ def _build_fontforge_script(
             yoff_frac=yoff_frac,
             total_nudge_fu=total_nudge_fu,
             hshift_fu=hshift_fu,
+            tightness=tightness,
+            use_body_width=gclass in {"lc_desc", "lig_desc", "uc_desc"},
         ))
 
     # Build OpenType feature lookups for ligatures
@@ -566,6 +577,7 @@ def _build_multiset_fontforge_script(
     font_name: str | None = None,
     kern_cfg: dict | None = None,
     space_width: int | None = None,
+    tightness: float = 1.0,
 ) -> tuple[str, dict[str, list[str]]]:
     """Generate a FontForge script that imports multiple glyph sets and
     creates contextual alternates (calt) to cycle between them.
@@ -641,6 +653,7 @@ def _build_multiset_fontforge_script(
             yoff_frac = y_off / bbox_h if bbox_h > 0 else 0
             total_nudge_fu = (nudge_px + extra_nudge_px) * _px_to_fu
             hshift_fu = hshift_px * _px_to_fu
+            gclass = _glyph_class(glyph, y_offset=y_off, bbox_h=bbox_h)
 
             if set_idx == 0:
                 if len(glyph) == 1:
@@ -667,6 +680,8 @@ def _build_multiset_fontforge_script(
                 yoff_frac=yoff_frac,
                 total_nudge_fu=total_nudge_fu,
                 hshift_fu=hshift_fu,
+                tightness=tightness,
+                use_body_width=gclass in {"lc_desc", "lig_desc", "uc_desc"},
             ))
 
     # ── Ligature lookups (base set only) ──
@@ -804,6 +819,7 @@ def compile_font_multiset(
     per_set_kerns: list[dict] | None = None,
     borrows_list: list[dict] | None = None,
     space_width: int | None = None,
+    tightness: float = 1.0,
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
@@ -841,7 +857,15 @@ def compile_font_multiset(
                 continue
             sets[i]["svg_map"][glyph] = source_svg
 
-    script, alt_glyphs = _build_multiset_fontforge_script(sets, str(output_otf.resolve()), dpi, font_name=font_name, kern_cfg=kern_cfg, space_width=space_width)
+    script, alt_glyphs = _build_multiset_fontforge_script(
+        sets,
+        str(output_otf.resolve()),
+        dpi,
+        font_name=font_name,
+        kern_cfg=kern_cfg,
+        space_width=space_width,
+        tightness=tightness,
+    )
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", prefix="ff_build_", delete=False,
@@ -879,6 +903,7 @@ def compile_font(
     font_name: str | None = None,
     kern_cfg: dict | None = None,
     space_width: int | None = None,
+    tightness: float = 1.0,
 ) -> Path:
     """Full Module C pipeline: vectorize → assemble → compile .otf."""
     extracted_dir = Path(extracted_dir)
@@ -897,6 +922,7 @@ def compile_font(
         svg_str_map, metadata,
         str(output_otf.resolve()), dpi, overrides,
         font_name=font_name, kern_cfg=kern_cfg, space_width=space_width,
+        tightness=tightness,
     )
 
     # Step 3: Run FontForge
