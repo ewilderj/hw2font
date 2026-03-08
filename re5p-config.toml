@@ -19,6 +19,7 @@
 #               overrides."☺".nudge = -3
 
 name = "EWJ Handwriting REF5P"
+space_width = 300
 
 # Kerning (font units, negative = tighter).
 # Shape-based classes for uppercase → lowercase:
