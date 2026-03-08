@@ -206,18 +206,31 @@ def _deskew(
 # ── Binarization ──────────────────────────────────────────────────────
 
 def _binarize(gray_cell: np.ndarray, dpi: int) -> np.ndarray:
-    """Adaptive threshold with pre-blur and morphological noise cleanup."""
+    """Hybrid threshold: Otsu (solid strokes) + adaptive (thin edges).
+
+    Adaptive thresholding alone hollows out thick pen strokes because
+    the center of a dark stroke doesn't differ from its local mean.
+    A global Otsu threshold catches those solid interiors; the adaptive
+    pass catches fine strokes and faint edges.  We union both results.
+    """
     ksize = max(3, int(round(0.4 * dpi / 72)) | 1)
     blurred = cv2.GaussianBlur(gray_cell, (ksize, ksize), 0)
 
+    # Global Otsu — fills solid dark areas reliably
+    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+
+    # Adaptive — catches thin strokes and faint ink the global misses
     block = max(11, int(round(2.5 * dpi / 72)) | 1)
-    binary = cv2.adaptiveThreshold(
+    adaptive = cv2.adaptiveThreshold(
         blurred, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
         blockSize=block,
         C=15,
     )
+
+    # Union: pixel is ink if EITHER method says so
+    binary = cv2.bitwise_or(otsu, adaptive)
 
     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kern, iterations=1)
