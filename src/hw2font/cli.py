@@ -441,11 +441,17 @@ def build(
         click.echo(f"  ✓ {w_name} → {path}")
         compiled_otfs.append((path, w))
 
-        # Per-weight proof for non-Regular
-        if w_delta != 0:
-            proof_path = Path(f"output/proof_set0_{w_name}.png")
-            generate_proof(path, proof_path)
-            click.echo(f"    ✓ Proof → {proof_path}")
+    # ── Combined weight proof sheet ──
+    if multi_weight:
+        from hw2font.proof.sheet import generate_weight_proof
+
+        weight_proof_entries = [
+            (otf_path, f"{w['name']} ({w['value']})")
+            for otf_path, w in compiled_otfs
+        ]
+        weight_proof_path = Path("output/proof_weights.png")
+        generate_weight_proof(weight_proof_entries, weight_proof_path)
+        click.echo(f"  ✓ Weight comparison → {weight_proof_path}")
 
     # ── Generate webfonts ──
     webfont_dir = Path("output/webfonts")

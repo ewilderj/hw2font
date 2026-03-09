@@ -23,7 +23,21 @@ _SAMPLES = [
     (None, "Every good boy does fine. She sells sea shells by the sea shore.", 24, 38),
 ]
 
+_WEIGHT_SAMPLES = [
+    ("Pangram (48px)", "The quick brown fox jumps over the lazy dog.", 48, 72),
+    ("Mixed case (48px)", "Hxgpjy Quickly Brown Fox 0123456789", 48, 72),
+    ("Body (30px)", "Pack my box with five dozen liquor jugs! Grumpy wizards", 30, 48),
+    (None, "make toxic brew for the jovial queen and her lazy dog.", 30, 48),
+]
+
 _SYS_FONT = "/System/Library/Fonts/Helvetica.ttc"
+
+
+def _load_label_font() -> ImageFont.FreeTypeFont:
+    try:
+        return ImageFont.truetype(_SYS_FONT, 13)
+    except OSError:
+        return ImageFont.load_default()
 
 
 def generate_proof(
@@ -36,29 +50,23 @@ def generate_proof(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Pre-calculate total height
-    total_h = 40  # top padding
+    total_h = 40
     for label, _, _, spacing in _SAMPLES:
         total_h += spacing + (18 if label else 0)
-    total_h += 40  # bottom padding
+    total_h += 40
 
     img = Image.new("RGB", (width, total_h), "white")
     draw = ImageDraw.Draw(img)
 
-    # Cache fonts by size
     font_cache: dict[int, ImageFont.FreeTypeFont] = {}
     for _, _, size, _ in _SAMPLES:
         if size not in font_cache:
             font_cache[size] = ImageFont.truetype(str(font_path), size)
 
-    try:
-        label_font = ImageFont.truetype(_SYS_FONT, 13)
-    except OSError:
-        label_font = ImageFont.load_default()
+    label_font = _load_label_font()
 
     y = 30
     for label, text, size, spacing in _SAMPLES:
-        # Light baseline reference
         draw.line([(20, y + spacing + 2), (width - 20, y + spacing + 2)],
                   fill="#f0f0f0", width=1)
         if label:
@@ -66,6 +74,67 @@ def generate_proof(
             y += 18
         draw.text((20, y), text, fill="black", font=font_cache[size])
         y += spacing
+
+    img.save(str(output_path))
+    return output_path
+
+
+def generate_weight_proof(
+    font_paths: list[tuple[str | Path, str]],
+    output_path: str | Path = "output/proof_weights.png",
+    width: int = 2400,
+) -> Path:
+    """Render a combined proof sheet showing all font weights.
+
+    *font_paths* is a list of ``(otf_path, weight_label)`` tuples,
+    e.g. ``[("output/Font-Light.otf", "Light 300"), ...]``.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    label_font = _load_label_font()
+
+    try:
+        heading_font = ImageFont.truetype(_SYS_FONT, 18)
+    except OSError:
+        heading_font = label_font
+
+    # Calculate height: title + per-weight section
+    section_h = 30  # weight heading + padding
+    for label, _, _, spacing in _WEIGHT_SAMPLES:
+        section_h += spacing + (18 if label else 0)
+    section_h += 20  # bottom padding per section
+
+    total_h = 50 + section_h * len(font_paths) + 30
+    img = Image.new("RGB", (width, total_h), "white")
+    draw = ImageDraw.Draw(img)
+
+    y = 25
+    draw.text((20, y), "Font Weight Comparison", fill="#333", font=heading_font)
+    y += 35
+
+    for font_path, weight_label in font_paths:
+        font_path = Path(font_path)
+
+        # Weight section header with colored bar
+        draw.rectangle([(15, y), (width - 15, y + 22)], fill="#f5f5f5")
+        draw.text((22, y + 3), weight_label, fill="#555", font=heading_font)
+        y += 30
+
+        font_cache: dict[int, ImageFont.FreeTypeFont] = {}
+        for _, _, size, _ in _WEIGHT_SAMPLES:
+            if size not in font_cache:
+                font_cache[size] = ImageFont.truetype(str(font_path), size)
+
+        for label, text, size, spacing in _WEIGHT_SAMPLES:
+            draw.line([(20, y + spacing + 2), (width - 20, y + spacing + 2)],
+                      fill="#f0f0f0", width=1)
+            if label:
+                draw.text((20, y), label, fill="#bbb", font=label_font)
+                y += 18
+            draw.text((20, y), text, fill="black", font=font_cache[size])
+            y += spacing
+
+        y += 20
 
     img.save(str(output_path))
     return output_path
