@@ -25,6 +25,23 @@
 
 name = "EWJ Handwriting REF5P"
 
+# Weight variants: stroke_delta controls morphological dilation/erosion.
+# Positive = bolder (dilate), negative = lighter (erode), 0 = unchanged.
+[[weights]]
+name = "Light"
+value = 300
+stroke_delta = -1
+
+[[weights]]
+name = "Regular"
+value = 400
+stroke_delta = 0
+
+[[weights]]
+name = "Bold"
+value = 700
+stroke_delta = 2
+
 # Tightness multiplier for letter spacing via side bearings.
 # 1.0 = default; higher values make the font feel more condensed.
 tightness = 1.0

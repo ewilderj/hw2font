@@ -76,3 +76,27 @@ def test_generate_webfont_emits_assets_and_css(tmp_path: Path, monkeypatch):
         (str(tmp_path / "web" / "sample.woff2"), "woff2"),
         (str(tmp_path / "web" / "sample.woff"), "woff"),
     ]
+
+
+def test_css_font_face_with_weight():
+    css = _css_font_face(
+        "My Font",
+        [("font.woff2", "woff2")],
+        font_weight="700",
+    )
+    assert "font-weight: 700;" in css
+
+
+def test_generate_webfont_passes_font_weight(tmp_path: Path, monkeypatch):
+    input_font = tmp_path / "sample.otf"
+    input_font.write_bytes(b"fake-font")
+    monkeypatch.setattr("hw2font.webfont.TTFont", _FakeTTFont)
+    _FakeTTFont.saved = []
+
+    result = generate_webfont(
+        input_font,
+        output_dir=tmp_path / "web",
+        emit_woff=False,
+        font_weight="700",
+    )
+    assert "font-weight: 700;" in result["css"]

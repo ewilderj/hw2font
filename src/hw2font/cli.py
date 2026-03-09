@@ -15,6 +15,28 @@ def _load_config(config_path: str) -> dict:
     return tomllib.loads(Path(config_path).read_text())
 
 
+_DEFAULT_WEIGHTS = [{"name": "Regular", "value": 400, "stroke_delta": 0}]
+
+
+def _parse_weights(cfg: dict) -> list[dict]:
+    """Parse ``[[weights]]`` from config, returning a validated list.
+
+    Each entry must have ``name``, ``value`` (100-900), ``stroke_delta`` (int).
+    If no weights section is present, returns a single Regular entry.
+    """
+    raw = cfg.get("weights")
+    if not raw:
+        return list(_DEFAULT_WEIGHTS)
+    weights: list[dict] = []
+    for w in raw:
+        weights.append({
+            "name": str(w.get("name", "Regular")),
+            "value": int(w.get("value", 400)),
+            "stroke_delta": int(w.get("stroke_delta", 0)),
+        })
+    return weights or list(_DEFAULT_WEIGHTS)
+
+
 def _load_overrides(config_path: str | None) -> dict:
     """Load per-glyph overrides from a single-set config file."""
     if not config_path:
@@ -268,6 +290,9 @@ def build(
     and optional per-glyph overrides. The resulting font uses contextual
     alternates (calt) to cycle between glyph variants for natural variety.
 
+    If [[weights]] are defined in the config, produces one OTF per weight
+    with appropriate stroke thickening/thinning.
+
     \b
     Example config (TOML):
         name = "My Handwriting"
@@ -275,15 +300,23 @@ def build(
         [[sets]]
         scans = ["extract1.png", "extract2.png"]
 
-        [[sets]]
-        scans = ["alt1.png", "alt2.png"]
-        overrides.a.scale = 0.8
-        overrides.i = {scale = 0.9, nudge = 10}
+        [[weights]]
+        name = "Regular"
+        value = 400
+        stroke_delta = 0
+
+        [[weights]]
+        name = "Bold"
+        value = 700
+        stroke_delta = 2
     """
     from hw2font.extract.pipeline import extract_glyphs
     from hw2font.autotune import autotune_build
-    from hw2font.compile.builder import compile_font, compile_font_multiset
+    from hw2font.compile.builder import (
+        apply_stroke_delta, compile_font, compile_font_multiset,
+    )
     from hw2font.proof.sheet import generate_proof
+    from hw2font.webfont import generate_webfont
 
     cfg = _load_config(config)
     sets = cfg.get("sets", [])
@@ -294,11 +327,13 @@ def build(
     kern_cfg: dict = cfg.get("kern", {})
     space_width: int | None = cfg.get("space_width")
     tightness: float = float(cfg.get("tightness", 1.0))
-    if output is None:
-        filename = (font_name or "Handwriting").replace(" ", "_") + ".otf"
-        output = str(Path("output") / filename)
+    weights = _parse_weights(cfg)
+    base_stem = (font_name or "Handwriting").replace(" ", "_")
 
-    click.echo(f"Building font from {len(sets)} scan set(s)...")
+    if output is None:
+        output = str(Path("output") / f"{base_stem}.otf")
+
+    click.echo(f"Building font from {len(sets)} scan set(s), {len(weights)} weight(s)...")
     if font_name:
         click.echo(f"  Font name: {font_name}")
     autotune = not no_autotune
@@ -334,7 +369,7 @@ def build(
         autotune_path = autotune_log
         if autotune_path is None:
             assert output is not None
-            autotune_path = str(Path(output).with_name(Path(output).stem + "_autotune.json"))
+            autotune_path = str(Path(output).with_name(base_stem + "_autotune.json"))
         click.echo(f"  Autotune: analyzing {len(extracted_dirs)} set(s)...")
         overrides_list, kern_cfg, per_set_kerns, artifacts = autotune_build(
             extracted_dirs=extracted_dirs,
@@ -354,9 +389,8 @@ def build(
         click.echo(f"    ✓ Log → {artifacts['json_log']}")
         click.echo(f"    ✓ Text log → {artifacts['text_log']}")
 
-    # Generate per-set proof sheets so each set can be reviewed independently
+    # Generate per-set proof sheets (using Regular weight glyphs)
     for i, (edir, ovr, skern) in enumerate(zip(extracted_dirs, overrides_list, per_set_kerns)):
-        # Merge global + set-level kern for the preview
         merged_kern = {**kern_cfg, **skern} if skern else kern_cfg
         tmp_otf = output_base / f"set{i}" / "preview.otf"
         click.echo(f"  Set {i}: compiling preview font...")
@@ -370,27 +404,72 @@ def build(
         tmp_otf.unlink(missing_ok=True)
         click.echo(f"    ✓ Proof → {proof_path}")
 
-    click.echo("  Compiling font with contextual alternates...")
-    path = compile_font_multiset(
-        extracted_dirs, overrides_list, output, dpi,
-        font_name=font_name, kern_cfg=kern_cfg, per_set_kerns=per_set_kerns,
-        borrows_list=borrows_list, space_width=space_width, tightness=tightness,
-    )
-    click.echo(f"✓ Font compiled → {path} ({len(sets)} variant sets)")
+    # ── Compile each weight ──
+    compiled_otfs: list[tuple[Path, dict]] = []
+    multi_weight = len(weights) > 1
 
-    # Generate webfonts alongside the OTF
-    from hw2font.webfont import generate_webfont
+    for w in weights:
+        w_name = w["name"]
+        w_value = w["value"]
+        w_delta = w["stroke_delta"]
 
-    webfont_dir = Path(path).parent / "webfonts"
-    css_path = webfont_dir / f"{Path(path).stem}.css"
-    result = generate_webfont(
-        font_path=path,
-        output_dir=str(webfont_dir),
-        emit_woff=True,
-        css_path=str(css_path),
-    )
-    for asset_path in result["files"]:
-        click.echo(f"  ✓ Webfont → {asset_path}")
+        if multi_weight:
+            w_stem = f"{base_stem}-{w_name}"
+        else:
+            w_stem = base_stem
+
+        w_output = Path("output") / f"{w_stem}.otf"
+
+        # Apply morphological stroke delta if non-zero
+        if w_delta != 0:
+            click.echo(f"  Weight {w_name}: applying stroke_delta={w_delta:+d}...")
+            weight_dirs: list[Path] = []
+            for i, edir in enumerate(extracted_dirs):
+                w_dir = output_base / f"set{i}_weight_{w_name.lower()}"
+                apply_stroke_delta(edir, w_dir, w_delta)
+                weight_dirs.append(w_dir)
+        else:
+            weight_dirs = list(extracted_dirs)
+
+        click.echo(f"  Weight {w_name} ({w_value}): compiling...")
+        path = compile_font_multiset(
+            weight_dirs, overrides_list, w_output, dpi,
+            font_name=font_name, kern_cfg=kern_cfg, per_set_kerns=per_set_kerns,
+            borrows_list=borrows_list, space_width=space_width, tightness=tightness,
+            weight_value=w_value, weight_name=w_name,
+        )
+        click.echo(f"  ✓ {w_name} → {path}")
+        compiled_otfs.append((path, w))
+
+        # Per-weight proof for non-Regular
+        if w_delta != 0:
+            proof_path = Path(f"output/proof_set0_{w_name}.png")
+            generate_proof(path, proof_path)
+            click.echo(f"    ✓ Proof → {proof_path}")
+
+    # ── Generate webfonts ──
+    webfont_dir = Path("output/webfonts")
+    all_webfont_files: list[Path] = []
+    all_css_blocks: list[str] = []
+
+    for otf_path, w in compiled_otfs:
+        result = generate_webfont(
+            font_path=otf_path,
+            output_dir=str(webfont_dir),
+            emit_woff=True,
+            font_weight=str(w["value"]),
+        )
+        all_webfont_files.extend(result["files"])
+        all_css_blocks.append(result["css"])
+        for asset_path in result["files"]:
+            click.echo(f"  ✓ Webfont → {asset_path}")
+
+    # Write combined CSS if multi-weight
+    css_path = webfont_dir / f"{base_stem}.css"
+    css_path.parent.mkdir(parents=True, exist_ok=True)
+    css_path.write_text("\n".join(all_css_blocks))
+
+    click.echo(f"✓ Built {len(compiled_otfs)} weight(s), {len(sets)} variant set(s)")
 
 
 @main.command()

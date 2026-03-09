@@ -315,3 +315,123 @@ class TestFfGlyphTransformCode:
         )
         assert "g.transform(psMat.translate(lsb + 0.00 - bb[0], 0))" in code
         assert "g.width = int((bb[2] - bb[0]) + 2 * lsb)" in code
+
+
+class TestApplyStrokeDelta:
+    """Tests for the morphological stroke weight function."""
+
+    def test_delta_zero_copies_unchanged(self, tmp_path):
+        import cv2
+        import numpy as np
+        from hw2font.compile.builder import apply_stroke_delta
+
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        glyph_dir = src / "glyphs"
+        glyph_dir.mkdir(parents=True)
+        (src / "metadata.json").write_text('{"A": {"file": "A.png"}}')
+
+        img = np.zeros((50, 40), dtype=np.uint8)
+        cv2.rectangle(img, (10, 5), (30, 45), 255, thickness=2)
+        cv2.imwrite(str(glyph_dir / "A.png"), img)
+
+        apply_stroke_delta(src, dst, delta=0)
+
+        result = cv2.imread(str(dst / "glyphs" / "A.png"), cv2.IMREAD_GRAYSCALE)
+        np.testing.assert_array_equal(result, img)
+
+    def test_positive_delta_increases_ink(self, tmp_path):
+        import cv2
+        import numpy as np
+        from hw2font.compile.builder import apply_stroke_delta
+
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        glyph_dir = src / "glyphs"
+        glyph_dir.mkdir(parents=True)
+        (src / "metadata.json").write_text('{"A": {"file": "A.png"}}')
+
+        img = np.zeros((50, 40), dtype=np.uint8)
+        cv2.rectangle(img, (10, 5), (30, 45), 255, thickness=2)
+        cv2.imwrite(str(glyph_dir / "A.png"), img)
+        original_ink = int(np.sum(img > 0))
+
+        apply_stroke_delta(src, dst, delta=2)
+
+        result = cv2.imread(str(dst / "glyphs" / "A.png"), cv2.IMREAD_GRAYSCALE)
+        dilated_ink = int(np.sum(result > 0))
+        assert dilated_ink > original_ink
+
+    def test_negative_delta_decreases_ink(self, tmp_path):
+        import cv2
+        import numpy as np
+        from hw2font.compile.builder import apply_stroke_delta
+
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        glyph_dir = src / "glyphs"
+        glyph_dir.mkdir(parents=True)
+        (src / "metadata.json").write_text('{"A": {"file": "A.png"}}')
+
+        # Thick rectangle so erosion doesn't erase everything
+        img = np.zeros((50, 40), dtype=np.uint8)
+        cv2.rectangle(img, (5, 5), (35, 45), 255, thickness=-1)
+        cv2.imwrite(str(glyph_dir / "A.png"), img)
+        original_ink = int(np.sum(img > 0))
+
+        apply_stroke_delta(src, dst, delta=-1)
+
+        result = cv2.imread(str(dst / "glyphs" / "A.png"), cv2.IMREAD_GRAYSCALE)
+        eroded_ink = int(np.sum(result > 0))
+        assert eroded_ink < original_ink
+
+    def test_erosion_preserves_thin_strokes(self, tmp_path):
+        import cv2
+        import numpy as np
+        from hw2font.compile.builder import apply_stroke_delta
+
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        glyph_dir = src / "glyphs"
+        glyph_dir.mkdir(parents=True)
+        (src / "metadata.json").write_text('{"l": {"file": "l.png"}}')
+
+        # Single-pixel thin line — erosion would erase it
+        img = np.zeros((50, 40), dtype=np.uint8)
+        img[5:45, 20] = 255
+        cv2.imwrite(str(glyph_dir / "l.png"), img)
+
+        apply_stroke_delta(src, dst, delta=-2)
+
+        result = cv2.imread(str(dst / "glyphs" / "l.png"), cv2.IMREAD_GRAYSCALE)
+        # Should fall back to original (not all-zero)
+        assert np.any(result > 0)
+
+
+class TestWeightNaming:
+    """Tests for weight naming in FontForge scripts."""
+
+    def test_regular_weight_script(self):
+        from hw2font.compile.builder import _build_fontforge_script
+
+        script = _build_fontforge_script(
+            svg_map={}, metadata={}, output_otf="/tmp/test.otf", dpi=600,
+            font_name="Test Font", weight_value=400, weight_name="Regular",
+        )
+        assert 'font.familyname = "Test Font"' in script
+        assert 'font.fullname = "Test Font"' in script
+        assert 'font.weight = "Regular"' in script
+        assert "font.os2_weight = 400" in script
+
+    def test_bold_weight_script(self):
+        from hw2font.compile.builder import _build_fontforge_script
+
+        script = _build_fontforge_script(
+            svg_map={}, metadata={}, output_otf="/tmp/test.otf", dpi=600,
+            font_name="Test Font", weight_value=700, weight_name="Bold",
+        )
+        assert 'font.familyname = "Test Font"' in script
+        assert 'font.fullname = "Test Font Bold"' in script
+        assert 'font.fontname = "Test_Font_Bold"' in script
+        assert 'font.weight = "Bold"' in script
+        assert "font.os2_weight = 700" in script

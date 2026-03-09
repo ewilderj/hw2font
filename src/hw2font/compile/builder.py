@@ -20,6 +20,7 @@ from pathlib import Path
 
 import cv2
 import click
+import numpy as np
 
 from hw2font.constants import (
     ALL_GLYPHS,
@@ -60,6 +61,58 @@ _POTRACE_OPTS = [
     "--alphamax", "1.2",     # corner threshold (lower = more corners kept)
     "--opttolerance", "0.2", # curve optimisation tolerance
 ]
+
+# ── Weight name → OS/2 usWeightClass mapping ─────────────────────────
+_WEIGHT_CLASS_MAP = {
+    100: "Thin",
+    200: "ExtraLight",
+    300: "Light",
+    400: "Regular",
+    500: "Medium",
+    600: "SemiBold",
+    700: "Bold",
+    800: "ExtraBold",
+    900: "Black",
+}
+
+
+# ── Morphological stroke weight manipulation ──────────────────────────
+
+def apply_stroke_delta(
+    src_dir: Path,
+    dst_dir: Path,
+    delta: int,
+) -> None:
+    """Apply morphological dilation/erosion to glyph PNGs.
+
+    *delta* > 0 dilates (bolder), < 0 erodes (lighter), 0 copies unchanged.
+    Operates on the ``glyphs/`` subdirectory and copies ``metadata.json``.
+    """
+    src_glyph_dir = src_dir / "glyphs"
+    dst_glyph_dir = dst_dir / "glyphs"
+    dst_glyph_dir.mkdir(parents=True, exist_ok=True)
+
+    import shutil
+    shutil.copy2(src_dir / "metadata.json", dst_dir / "metadata.json")
+
+    if delta == 0:
+        for png in src_glyph_dir.glob("*.png"):
+            shutil.copy2(png, dst_glyph_dir / png.name)
+        return
+
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    iterations = abs(delta)
+    op = cv2.MORPH_DILATE if delta > 0 else cv2.MORPH_ERODE
+
+    for png in src_glyph_dir.glob("*.png"):
+        img = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        result = cv2.morphologyEx(img, op, kern, iterations=iterations)
+        # Prevent total erasure: if erosion removed all ink, keep original
+        if delta < 0 and not np.any(result > 0):
+            result = img
+        cv2.imwrite(str(dst_glyph_dir / png.name), result)
 
 
 # ── Potrace vectorization ─────────────────────────────────────────────
@@ -432,6 +485,8 @@ def _build_fontforge_script(
     kern_cfg: dict | None = None,
     space_width: int | None = None,
     tightness: float = 1.0,
+    weight_value: int = 400,
+    weight_name: str = "Regular",
 ) -> str:
     """Generate a FontForge Python script as a string.
 
@@ -486,15 +541,22 @@ def _build_fontforge_script(
         else:
             e["nudge_px"] = 0.0
 
+    _family = font_name or FONT_FAMILY
+    _sub = weight_name
+    _full = f"{_family} {_sub}" if _sub != "Regular" else _family
+    _ps = _full.replace(" ", "_")
+
     lines.append(textwrap.dedent(f"""\
         import fontforge
         import psMat
         import json
 
         font = fontforge.font()
-        font.familyname = "{font_name or FONT_FAMILY}"
-        font.fontname = "{(font_name or FONT_FAMILY).replace(' ', '_')}"
-        font.fullname = "{font_name or FONT_FAMILY}"
+        font.familyname = "{_family}"
+        font.fontname = "{_ps}"
+        font.fullname = "{_full}"
+        font.weight = "{_sub}"
+        font.os2_weight = {weight_value}
         font.em = {DEFAULT_UPM}
         font.ascent = {DEFAULT_ASCENT}
         font.descent = {DEFAULT_DESCENT}
@@ -578,6 +640,8 @@ def _build_multiset_fontforge_script(
     kern_cfg: dict | None = None,
     space_width: int | None = None,
     tightness: float = 1.0,
+    weight_value: int = 400,
+    weight_name: str = "Regular",
 ) -> tuple[str, dict[str, list[str]]]:
     """Generate a FontForge script that imports multiple glyph sets and
     creates contextual alternates (calt) to cycle between them.
@@ -606,14 +670,21 @@ def _build_multiset_fontforge_script(
     # ── Compute baseline nudge medians from set 0 ──
     group_medians = _compute_nudge_medians(p_meta)
 
+    _family = font_name or FONT_FAMILY
+    _sub = weight_name
+    _full = f"{_family} {_sub}" if _sub != "Regular" else _family
+    _ps = _full.replace(" ", "_")
+
     lines.append(textwrap.dedent(f"""\
         import fontforge
         import psMat
 
         font = fontforge.font()
-        font.familyname = "{font_name or FONT_FAMILY}"
-        font.fontname = "{(font_name or FONT_FAMILY).replace(' ', '_')}"
-        font.fullname = "{font_name or FONT_FAMILY}"
+        font.familyname = "{_family}"
+        font.fontname = "{_ps}"
+        font.fullname = "{_full}"
+        font.weight = "{_sub}"
+        font.os2_weight = {weight_value}
         font.em = {DEFAULT_UPM}
         font.ascent = {DEFAULT_ASCENT}
         font.descent = {DEFAULT_DESCENT}
@@ -820,6 +891,8 @@ def compile_font_multiset(
     borrows_list: list[dict] | None = None,
     space_width: int | None = None,
     tightness: float = 1.0,
+    weight_value: int = 400,
+    weight_name: str = "Regular",
 ) -> Path:
     """Compile a font from multiple extracted scan sets with calt alternates."""
     output_otf = Path(output_otf)
@@ -865,6 +938,8 @@ def compile_font_multiset(
         kern_cfg=kern_cfg,
         space_width=space_width,
         tightness=tightness,
+        weight_value=weight_value,
+        weight_name=weight_name,
     )
 
     with tempfile.NamedTemporaryFile(
@@ -904,6 +979,8 @@ def compile_font(
     kern_cfg: dict | None = None,
     space_width: int | None = None,
     tightness: float = 1.0,
+    weight_value: int = 400,
+    weight_name: str = "Regular",
 ) -> Path:
     """Full Module C pipeline: vectorize → assemble → compile .otf."""
     extracted_dir = Path(extracted_dir)
@@ -922,7 +999,7 @@ def compile_font(
         svg_str_map, metadata,
         str(output_otf.resolve()), dpi, overrides,
         font_name=font_name, kern_cfg=kern_cfg, space_width=space_width,
-        tightness=tightness,
+        tightness=tightness, weight_value=weight_value, weight_name=weight_name,
     )
 
     # Step 3: Run FontForge

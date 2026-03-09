@@ -59,6 +59,7 @@ def generate_webfont(
     url_prefix: str = ".",
     emit_woff: bool = False,
     css_path: str | Path | None = None,
+    font_weight: str = "normal",
 ) -> dict[str, object]:
     """Convert an OTF/TTF font into webfont assets and CSS."""
     font_path = Path(font_path)
@@ -84,7 +85,7 @@ def generate_webfont(
         generated_files.append(out_path)
         sources.append((_join_url_prefix(url_prefix, out_path.name), flavor))
 
-    css = _css_font_face(resolved_family, sources)
+    css = _css_font_face(resolved_family, sources, font_weight=font_weight)
     if css_path is None:
         css_path = output_dir / f"{font_path.stem}.css"
     css_path = Path(css_path)
