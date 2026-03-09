@@ -39,7 +39,9 @@ The pipeline is built around five stages:
   - configurable kerning rules
 - Default-on **autotune** with logs and per-set control knobs
 - Autotune vertical nudge for uppercase/digit baseline alignment
+- **Font weight variants** (Light, Regular, Bold, etc.) via bitmap morphology
 - Webfont export to `.woff2` / `.woff` (auto-generated on build)
+- Combined weight comparison proof sheets
 
 ## Example outputs
 
@@ -423,6 +425,81 @@ Use both together:
 - `tightness` for letter-to-letter feel
 - `space_width` for word spacing
 
+## Font weight variants
+
+Generate multiple weights (Light, Regular, Bold, etc.) from a single set of scans.
+Weights are synthesized by applying morphological dilation or erosion to the glyph
+bitmaps before vectorization — dilation thickens strokes (bolder), erosion thins
+them (lighter).
+
+### Config
+
+Add a `[[weights]]` section to your TOML config:
+
+```toml
+[[weights]]
+name = "Light"
+value = 300
+stroke_delta = -1    # erode by 1px (thinner strokes)
+
+[[weights]]
+name = "Regular"
+value = 400
+stroke_delta = 0     # no change
+
+[[weights]]
+name = "Bold"
+value = 700
+stroke_delta = 2     # dilate by 2px (thicker strokes)
+```
+
+- `name` — weight name (used in filename and font metadata)
+- `value` — CSS `font-weight` number (100–900), sets the OS/2 `usWeightClass`
+- `stroke_delta` — morphological kernel iterations (negative = erode, positive = dilate)
+
+If no `[[weights]]` section is present, a single Regular (400) font is produced —
+fully backward compatible.
+
+### Output
+
+Each weight produces its own OTF and webfont files:
+
+```text
+output/
+├── My_Font-Light.otf
+├── My_Font-Regular.otf
+├── My_Font-Bold.otf
+├── proof_weights.png          # combined weight comparison sheet
+└── webfonts/
+    ├── My_Font-Light.woff2
+    ├── My_Font-Regular.woff2
+    ├── My_Font-Bold.woff2
+    └── My_Font.css            # all weights in one CSS file
+```
+
+The generated CSS contains one `@font-face` per weight, all sharing the same
+`font-family` name:
+
+```css
+@font-face {
+  font-family: "My Font";
+  src: url("My_Font-Light.woff2") format("woff2");
+  font-weight: 300;
+}
+@font-face {
+  font-family: "My Font";
+  src: url("My_Font-Bold.woff2") format("woff2");
+  font-weight: 700;
+}
+```
+
+### Tips
+
+- Start with `stroke_delta` values of -1, 0, +1, +2 and adjust from there
+- Very thin strokes may vanish under erosion; the pipeline preserves the original if erosion removes all ink
+- Autotune runs once on the unmodified (Regular) glyphs; results are shared across all weights
+- The weight comparison proof sheet (`proof_weights.png`) shows all weights side by side for quick review
+
 ## Autotune
 
 `build` runs autotune by default.
@@ -511,9 +588,9 @@ borrow."-" = 1
 
 Typical generated files in `output/`:
 
-- `*.otf` - compiled font
-- `proof.png` - specimen sheet
+- `*-Regular.otf`, `*-Bold.otf` - compiled fonts (one per weight, or just `*.otf` if no weights configured)
 - `proof_set0.png`, `proof_set1.png` - set-by-set proof sheets
+- `proof_weights.png` - combined weight comparison (when multiple weights)
 - `*_autotune.json` - machine-readable tuning log
 - `*_autotune.txt` - human-readable tuning log
 - `webfonts/*.woff2`, `webfonts/*.woff`, `webfonts/*.css`
